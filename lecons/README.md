@@ -10,7 +10,7 @@ Chaque leçon = une idée + un script à lancer + une question à se poser.
 | 4 | Les 12 angles d'une trame (interpolation, sens horaire → trigo) | `04_angles.py` | ✅ |
 | 5 | Assembler un tour complet (détecter le passage 360° → 0°) | `05_tour_complet.py` | ✅ |
 | 6 | Polaire → cartésien, puis pose du robot (rotation + translation) | `06_reperes.py` + `lidar/geometry.py` | ✅ |
-| 7 | En salle : flasher l'ESP32, enregistrer ses propres scans | `firmware/`, `lidar/acquire.py` | ⬜ |
+| 7 | En salle : flasher l'ESP32, enregistrer ses propres scans | `07_en_salle.md`, `07_verif_scan.py`, `firmware/`, `lidar/acquire.py` | préparée ⏳ |
 | 8 | Afficher plusieurs scans et les recaler à la main | `lidar/viewer.py` | ⬜ |
 | 9 | Grid map : grille, cellules libres / occupées | `lidar/gridmap.py` | ⬜ |
 | 10 | Segments : extraction, angle, fusion, intersection, découpe | `lidar/segments.py` | ⬜ |
