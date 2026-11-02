@@ -1,16 +1,22 @@
 """Leçon 1 : décoder UNE trame LD06 à la main, octet par octet.
 
 Lancer :  .venv/Scripts/python lecons/01_trame.py
-La trame vient de l'exemple du document « Acquisition des données issues du Lidar LD06 ».
+La trame vient de la datasheet « LD06 Communication Protocol.pdf », page 8.
 """
 
-DOC_HEX = (
+import sys
+
+# Trame officielle, page 8 du « LD06 Communication Protocol.pdf » (47 octets, CRC correct)
+OFFICIELLE_HEX = (
+    "54 2C 68 08 AB 7E E0 00 E4 DC 00 E2 D9 00 E5 D5 00 E3 D3 00 E4 D0 00 E9 CD 00 E4 "
+    "CA 00 E2 C7 00 E9 C5 00 E5 C2 00 E5 C0 00 E5 BE 82 3A 1A 50"
+)
+# Trame du document de cours : imprimée avec 40 octets au lieu de 47 (incomplète)
+COURS_HEX = (
     "54 2C 60 09 5A 15 "
     "D0 07 25 D0 07 2B D1 07 2F D2 07 30 D1 07 2F D1 07 2E "
     "D0 07 2B D0 07 28 D0 07 25 D1 07 60 15 3E 00 9A"
 )
-# ⚠ La trame imprimée dans le document fait 40 octets au lieu de 47 : il manque des mesures.
-# On en fabrique une COMPLÈTE avec les mêmes valeurs (en-tête, 12 mesures, fin), puis on calcule son CRC.
 
 
 def u16(octets: bytes, pos: int) -> int:
@@ -28,14 +34,11 @@ def crc8(octets: bytes) -> int:
     return crc
 
 
-print(f"Trame du document : {len(bytes.fromhex(DOC_HEX))} octets -> incomplète (il en faut 47), on la refait.")
-entete = bytes.fromhex("54 2C 60 09 5A 15")
-mesures = bytes.fromhex("D0 07 25 D0 07 2B D1 07 2F D2 07 30 D1 07 2F D1 07 2E "
-                        "D0 07 2B D0 07 28 D0 07 25 D1 07 25 D0 07 2B D0 07 28")  # 12 x 3 octets
-fin_trame = bytes.fromhex("60 15 3E 00")                                       # angle fin + timestamp
-sans_crc = entete + mesures + fin_trame
-trame = sans_crc + bytes([crc8(sans_crc)])
-print(f"Trame reconstruite : {len(trame)} octets\n  {trame.hex(' ').upper()}")
+print(f"Trame du cours : {len(bytes.fromhex(COURS_HEX))} octets -> incomplète (il en faut 47) : on ne peut pas l'utiliser.")
+trame = bytes.fromhex(OFFICIELLE_HEX)
+print(f"Trame de la datasheet : {len(trame)} octets\n  {trame.hex(' ').upper()}")
+if len(trame) != 47:
+    sys.exit("longueur incorrecte")
 
 print("\n--- En-tête ---")
 print(f"octet 0  = 0x{trame[0]:02X}  -> header (doit valoir 0x54)")
