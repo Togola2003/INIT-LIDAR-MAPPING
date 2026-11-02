@@ -1,515 +1,607 @@
-"""LidarScope : fenêtre de visualisation en direct des scans du LD06.
+"""LidarScope : visualisation en direct, captures, traitement et échange de données du lidar LD06.
 
-    .venv/Scripts/python -m lidar.scope
+    .venv/Scripts/python -m lidar.scope        (ou double-clic sur LidarScope.bat)
 
-Choisir le port série, Connecter (ou « Démo » sans robot), regarder le scan en direct au centre.
-Quand l'image plaît : renseigner la pose du robot puis « Capturer » (touche C). Chaque capture
-reçoit sa couleur. Exports : image PNG, tableau CSV de tous les points, fichiers au format du TP.
+Raccourcis : Espace = pause · C = capturer · M = règle de mesure · R = recentrer
 """
 
 from __future__ import annotations
 
 import collections
-import csv
 import queue
 import time
-import tkinter as tk
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox
 
-import numpy as np
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.figure import Figure
+import customtkinter as ctk
 
+from ..extraction import scan_to_segments
 from ..geometry import Pose
-from ..scan import Scan, load_scan, save_scan
+from ..gridmap import grid_for_scans, update_grid
+from ..scan import Scan, save_scan
+from ..vectormap import VectorMap, build_vector_map, save_vector_map
+from . import theme as T
+from .mapview import MapView
+from .processing import Filters, average_scans, scan_stats
+from .session import Capture, now_utc, read_any, save_session, save_table
 from .sources import DemoSource, SerialSource, list_ports
+from .widgets import LabeledSlider, PoseEntry, StatCard, button, font, section
 
-CAPTURE_COLORS = ["#2ecc71", "#e67e22", "#3498db", "#e84393", "#f1c40f", "#9b59b6", "#1abc9c", "#e74c3c"]
-LIVE_COLOR = "#dfe6e9"
-BG, PANEL, INK, MUTED, ACCENT = "#14171c", "#1d2128", "#e8eaed", "#8b93a1", "#2ecc71"
 REFRESH_MS = 100
 BAUDS = ["115200", "230400", "460800", "921600"]
-
-
-@dataclass(frozen=True)
-class Capture:
-    number: int
-    scan: Scan
-    color: str
-    visible: bool = True
+NUDGES = {"Fin": (0.01, 0.5), "Normal": (0.05, 2.0), "Gros": (0.20, 5.0)}
+GRID_RES = {"2 cm": 0.02, "5 cm": 0.05, "10 cm": 0.10}
 
 
 class LidarScope:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.events: queue.Queue = queue.Queue()
         self.source = None
-        self.live: Scan | None = None
         self.paused = False
+        self.recent: collections.deque[Scan] = collections.deque(maxlen=10)   # derniers tours bruts
         self.captures: list[Capture] = []
-        self.artists: dict[int, object] = {}
+        self.selected: int | None = None
+        self.filters = Filters()
         self.scan_times: collections.deque = collections.deque(maxlen=20)
         self.scan_count = 0
         self.telemetry: dict[str, float] = {}
-        self._needs_recenter = True
-        self.analysis_artists: list = []
+        self._framed = False
+        self._analysis_job = None
+        self.last_segments: list = []
 
         root.title("LidarScope · LD06")
-        root.geometry("1400x860")
-        root.configure(bg=BG)
-        self._style()
+        root.geometry("1500x900")
+        root.minsize(1150, 720)
+        root.configure(fg_color=T.BG)
         self._build_topbar()
-        body = tk.Frame(root, bg=BG)
-        body.pack(fill="both", expand=True)
-        self._build_sidebar(body)
+        body = ctk.CTkFrame(root, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(0, weight=1)
         self._build_map(body)
-        self._build_statusbar()
-        root.bind("<space>", lambda e: self.toggle_pause())
-        root.bind("<KeyPress-c>", lambda e: self.capture())
+        self._build_sidebar(body)
+        for key, fn in (("<space>", self.toggle_pause), ("c", self.capture), ("m", self.toggle_ruler),
+                        ("r", self.recenter)):
+            root.bind(key, lambda e, f=fn: None if self._typing(e) else f())
         root.protocol("WM_DELETE_WINDOW", self.quit)
         self.refresh_ports()
-        root.after(REFRESH_MS, self._tick)
+        self._tick_job = root.after(REFRESH_MS, self._tick)
+        root.after(400, self.recenter)   # cadre la vue une fois la fenêtre dimensionnée
 
-    # ------------------------------------------------------------------ construction
-    def _style(self) -> None:
-        s = ttk.Style()
-        s.theme_use("clam")
-        s.configure(".", background=PANEL, foreground=INK, fieldbackground=BG, bordercolor="#2b313b")
-        s.configure("TButton", padding=(10, 5), background="#2b313b", foreground=INK)
-        s.map("TButton", background=[("active", "#3a414d")])
-        s.configure("Accent.TButton", background=ACCENT, foreground="#0b0d10", font=("Segoe UI", 11, "bold"))
-        s.map("Accent.TButton", background=[("active", "#58d68d")])
-        s.configure("TLabelframe", background=PANEL)
-        s.configure("TLabelframe.Label", background=PANEL, foreground=MUTED, font=("Segoe UI", 9, "bold"))
-        s.configure("TLabel", background=PANEL)
-        s.configure("Muted.TLabel", foreground=MUTED)
-        s.configure("Big.TLabel", font=("Consolas", 11))
-        s.configure("Treeview", background=BG, fieldbackground=BG, foreground=INK, rowheight=24)
-        s.configure("TCheckbutton", background=PANEL)
-
+    # ================================================================== construction
     def _build_topbar(self) -> None:
-        bar = tk.Frame(self.root, bg=PANEL, padx=10, pady=8)
-        bar.pack(fill="x")
-        tk.Label(bar, text="LidarScope", bg=PANEL, fg=ACCENT, font=("Segoe UI", 14, "bold")).pack(side="left")
-        tk.Label(bar, text="  Port", bg=PANEL, fg=MUTED).pack(side="left", padx=(20, 4))
-        self.port_var = tk.StringVar()
-        self.port_box = ttk.Combobox(bar, textvariable=self.port_var, width=12, state="readonly")
-        self.port_box.pack(side="left")
-        ttk.Button(bar, text="⟳", width=3, command=self.refresh_ports).pack(side="left", padx=4)
-        tk.Label(bar, text="Débit", bg=PANEL, fg=MUTED).pack(side="left", padx=(12, 4))
-        self.baud_var = tk.StringVar(value=BAUDS[0])
-        ttk.Combobox(bar, textvariable=self.baud_var, values=BAUDS, width=8, state="readonly").pack(side="left")
-        self.connect_btn = ttk.Button(bar, text="Connecter", style="Accent.TButton", command=self.toggle_connect)
-        self.connect_btn.pack(side="left", padx=10)
-        ttk.Button(bar, text="Démo (sans robot)", command=self.start_demo).pack(side="left")
-        self.led = tk.Label(bar, text="●", bg=PANEL, fg="#636e72", font=("Segoe UI", 14))
-        self.led.pack(side="right")
-        self.conn_label = tk.Label(bar, text="Déconnecté", bg=PANEL, fg=MUTED)
-        self.conn_label.pack(side="right", padx=6)
+        bar = ctk.CTkFrame(self.root, fg_color=T.SURFACE, corner_radius=0, height=60)
+        bar.pack(fill="x", pady=(0, 12))
+        brand = ctk.CTkFrame(bar, fg_color="transparent")
+        brand.pack(side="left", padx=16, pady=8)
+        ctk.CTkLabel(brand, text="◉ LidarScope", font=font(18, "bold"), text_color=T.ACCENT).pack(anchor="w")
+        ctk.CTkLabel(brand, text="LD06 · temps réel", font=font(10), text_color=T.MUTED).pack(anchor="w")
 
-    def _build_sidebar(self, parent: tk.Frame) -> None:
-        side = ttk.Frame(parent, padding=10, width=330)
-        side.pack(side="right", fill="y")
-        side.pack_propagate(False)
+        ctk.CTkLabel(bar, text="Port", font=font(12), text_color=T.MUTED).pack(side="left", padx=(24, 6))
+        self.port_menu = ctk.CTkOptionMenu(bar, values=["—"], width=110, fg_color=T.SURFACE_2,
+                                           button_color=T.BORDER, button_hover_color=T.MUTED)
+        self.port_menu.pack(side="left")
+        button(bar, "↻", self.refresh_ports, width=34).pack(side="left", padx=6)
+        ctk.CTkLabel(bar, text="Débit", font=font(12), text_color=T.MUTED).pack(side="left", padx=(12, 6))
+        self.baud_menu = ctk.CTkOptionMenu(bar, values=BAUDS, width=100, fg_color=T.SURFACE_2,
+                                           button_color=T.BORDER, button_hover_color=T.MUTED)
+        self.baud_menu.pack(side="left")
+        self.connect_btn = button(bar, "Connecter", self.toggle_connect, primary=True, width=120)
+        self.connect_btn.pack(side="left", padx=(14, 6))
+        button(bar, "Démo sans robot", self.start_demo).pack(side="left")
 
-        live = ttk.LabelFrame(side, text="SCAN EN DIRECT", padding=8)
-        live.pack(fill="x")
-        self.stats_var = tk.StringVar(value="En attente de données…")
-        ttk.Label(live, textvariable=self.stats_var, style="Big.TLabel", justify="left").pack(anchor="w")
-        row = ttk.Frame(live)
-        row.pack(fill="x", pady=(8, 0))
-        self.pause_btn = ttk.Button(row, text="⏸ Pause (Espace)", command=self.toggle_pause)
+        pill = ctk.CTkFrame(bar, fg_color=T.SURFACE_2, corner_radius=14)
+        pill.pack(side="right", padx=16)
+        self.led = ctk.CTkLabel(pill, text="●", font=font(14), text_color=T.MUTED)
+        self.led.pack(side="left", padx=(12, 4), pady=4)
+        self.conn_label = ctk.CTkLabel(pill, text="Déconnecté", font=font(12), text_color=T.INK)
+        self.conn_label.pack(side="left", padx=(0, 12))
+
+    def _build_map(self, parent) -> None:
+        card = ctk.CTkFrame(parent, fg_color=T.SURFACE, corner_radius=12)
+        card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        tools = ctk.CTkFrame(card, fg_color="transparent")
+        tools.pack(fill="x", padx=10, pady=(10, 4))
+        self.pause_btn = button(tools, "⏸  Pause", self.toggle_pause, width=100)
         self.pause_btn.pack(side="left")
-        ttk.Button(row, text="Recentrer", command=self.recenter).pack(side="left", padx=6)
-        row2 = ttk.Frame(live)
-        row2.pack(fill="x", pady=(6, 0))
-        ttk.Label(row2, text="Portée affichée (m)", style="Muted.TLabel").pack(side="left")
-        self.range_var = tk.DoubleVar(value=5.0)
-        ttk.Spinbox(row2, from_=1, to=12, increment=0.5, textvariable=self.range_var, width=5,
-                    command=self.recenter).pack(side="left", padx=6)
+        button(tools, "⌖  Recentrer", self.recenter, width=110).pack(side="left", padx=6)
+        self.ruler_btn = button(tools, "📏  Règle", self.toggle_ruler, width=100)
+        self.ruler_btn.pack(side="left")
+        ctk.CTkLabel(tools, text="Couleur du direct", font=font(11), text_color=T.MUTED).pack(side="left", padx=(18, 6))
+        self.color_mode = ctk.CTkSegmentedButton(tools, values=["Uni", "Intensité"], command=lambda _: self._redraw_live(),
+                                                 selected_color=T.ACCENT, selected_hover_color=T.ACCENT_HOVER,
+                                                 unselected_color=T.SURFACE_2, text_color=T.INK)
+        self.color_mode.set("Uni")
+        self.color_mode.pack(side="left")
+        self.live_seg_switch = ctk.CTkSwitch(tools, text="Segments en direct", font=font(11),
+                                             progress_color=T.ACCENT, command=self._redraw_live)
+        self.live_seg_switch.pack(side="left", padx=14)
+        ctk.CTkLabel(tools, text="molette : zoom · glisser : déplacer", font=font(10),
+                     text_color=T.MUTED).pack(side="right")
 
-        cap = ttk.LabelFrame(side, text="POSE DU ROBOT  (mètres, degrés)", padding=8)
-        cap.pack(fill="x", pady=10)
-        self.pose_vars = [tk.StringVar(value="0") for _ in range(3)]
-        grid = ttk.Frame(cap)
+        holder = ctk.CTkFrame(card, fg_color=T.BG, corner_radius=8)
+        holder.pack(fill="both", expand=True, padx=10)
+        self.cursor_var = ctk.StringVar(value="Connecte le robot ou lance la démo.")
+        self.map = MapView(holder, on_cursor=self.cursor_var.set)
+        self.map.widget.pack(fill="both", expand=True, padx=2, pady=2)
+        ctk.CTkLabel(card, textvariable=self.cursor_var, font=font(11, mono=True), text_color=T.MUTED,
+                     anchor="w").pack(fill="x", padx=14, pady=(4, 8))
+
+    def _build_sidebar(self, parent) -> None:
+        tabs = ctk.CTkTabview(parent, width=390, fg_color=T.SURFACE, corner_radius=12,
+                              segmented_button_selected_color=T.ACCENT,
+                              segmented_button_selected_hover_color=T.ACCENT_HOVER,
+                              segmented_button_unselected_color=T.SURFACE_2, text_color=T.INK)
+        tabs.grid(row=0, column=1, sticky="ns")
+        for name in ("Direct", "Captures", "Traitement", "Données"):
+            tabs.add(name)
+        self._tab_direct(ctk.CTkScrollableFrame(tabs.tab("Direct"), fg_color="transparent"))
+        self._tab_captures(ctk.CTkScrollableFrame(tabs.tab("Captures"), fg_color="transparent"))
+        self._tab_processing(ctk.CTkScrollableFrame(tabs.tab("Traitement"), fg_color="transparent"))
+        self._tab_data(ctk.CTkScrollableFrame(tabs.tab("Données"), fg_color="transparent"))
+        self.status_var = ctk.StringVar(value="")
+        ctk.CTkLabel(parent, textvariable=self.status_var, font=font(11), text_color=T.MUTED, anchor="w",
+                     wraplength=1300).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+    def _tab_direct(self, tab) -> None:
+        tab.pack(fill="both", expand=True)
+        grid = ctk.CTkFrame(tab, fg_color="transparent")
         grid.pack(fill="x")
-        for k, name in enumerate(("x", "y", "θ")):
-            ttk.Label(grid, text=name, style="Muted.TLabel").grid(row=0, column=2 * k, padx=(0, 3))
-            ttk.Entry(grid, textvariable=self.pose_vars[k], width=7).grid(row=0, column=2 * k + 1, padx=(0, 8))
-        ttk.Label(cap, text="Mesurée au mètre depuis le coin de référence", style="Muted.TLabel").pack(anchor="w", pady=(4, 6))
-        ttk.Button(cap, text="📸  Capturer ce scan  (C)", style="Accent.TButton", command=self.capture).pack(fill="x")
+        self.cards = {}
+        for k, name in enumerate(("Points", "Tours / s", "Sans écho", "Plus proche")):
+            c = StatCard(grid, name)
+            c.grid(row=k // 2, column=k % 2, sticky="ew", padx=3, pady=3)
+            grid.grid_columnconfigure(k % 2, weight=1)
+            self.cards[name] = c
+        box = section(tab, "Distances autour du robot")
+        self.dir_labels = {}
+        for name in ("Devant", "Gauche", "Derrière", "Droite"):
+            row = ctk.CTkFrame(box, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=2)
+            ctk.CTkLabel(row, text=name, font=font(12), text_color=T.MUTED).pack(side="left")
+            self.dir_labels[name] = ctk.CTkLabel(row, text="—", font=font(13, "bold", mono=True), text_color=T.INK)
+            self.dir_labels[name].pack(side="right")
+        box = section(tab, "Pose du robot (coin de référence)")
+        self.pose_entry = PoseEntry(box)
+        self.pose_entry.pack(padx=10, pady=(10, 4))
+        ctk.CTkLabel(box, text="Le direct s'affiche à cette pose sur la carte.", font=font(10),
+                     text_color=T.MUTED).pack(pady=(0, 8))
+        box = section(tab, "Qualité de la capture")
+        self.avg_slider = LabeledSlider(box, "Moyenne sur N tours", 1, 10, 3, "{:.0f}", lambda v: None, steps=9)
+        self.avg_slider.pack(fill="x", padx=12, pady=10)
+        button(tab, "📸   Capturer ce scan      C", self.capture, primary=True, height=46).pack(fill="x", pady=(16, 4))
+        ctk.CTkLabel(tab, text="Espace : figer l'image avant de capturer", font=font(10),
+                     text_color=T.MUTED).pack()
+        box = section(tab, "Télémétrie")
+        self.tel_label = ctk.CTkLabel(box, text="—", font=font(11, mono=True), text_color=T.INK, justify="left")
+        self.tel_label.pack(anchor="w", padx=12, pady=8)
 
-        lst = ttk.LabelFrame(side, text="CAPTURES", padding=8)
-        lst.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(lst, columns=("pts", "pose"), show="tree headings", height=6, selectmode="browse")
-        self.tree.heading("#0", text="Scan")
-        self.tree.heading("pts", text="Points")
-        self.tree.heading("pose", text="Pose (x, y, θ)")
-        self.tree.column("#0", width=80)
-        self.tree.column("pts", width=55, anchor="e")
-        self.tree.column("pose", width=130)
-        self.tree.pack(fill="both", expand=True)
-        self.tree.bind("<<TreeviewSelect>>", self._on_select_capture)
-        btns = ttk.Frame(lst)
-        btns.pack(fill="x", pady=(6, 0))
-        ttk.Button(btns, text="Afficher/masquer", command=self.toggle_visible).pack(side="left")
-        ttk.Button(btns, text="Appliquer pose", command=self.apply_pose).pack(side="left", padx=4)
-        ttk.Button(btns, text="Suppr.", command=self.delete_capture).pack(side="left")
+    def _tab_captures(self, tab) -> None:
+        tab.pack(fill="both", expand=True)
+        self.capture_list = ctk.CTkFrame(tab, fg_color="transparent")
+        self.capture_list.pack(fill="x")
+        self.empty_label = ctk.CTkLabel(self.capture_list, text="Aucune capture.\nOnglet Direct → Capturer, ou Données → Importer.",
+                                        font=font(12), text_color=T.MUTED)
+        self.empty_label.pack(pady=20)
+        box = section(tab, "Recaler la capture sélectionnée")
+        self.sel_label = ctk.CTkLabel(box, text="Clique sur une capture", font=font(12, "bold"), text_color=T.MUTED)
+        self.sel_label.pack(pady=(8, 4))
+        self.nudge_mode = ctk.CTkSegmentedButton(box, values=list(NUDGES), selected_color=T.ACCENT,
+                                                 selected_hover_color=T.ACCENT_HOVER, unselected_color=T.SURFACE)
+        self.nudge_mode.set("Normal")
+        self.nudge_mode.pack(pady=4)
+        pad = ctk.CTkFrame(box, fg_color="transparent")
+        pad.pack(pady=6)
+        for (r, c, txt, d) in ((0, 1, "↑", (0, 1, 0)), (1, 0, "←", (-1, 0, 0)), (1, 2, "→", (1, 0, 0)),
+                               (2, 1, "↓", (0, -1, 0)), (0, 0, "⟲", (0, 0, 1)), (0, 2, "⟳", (0, 0, -1))):
+            button(pad, txt, lambda d=d: self.nudge(*d), width=44, height=36, font=font(16)).grid(row=r, column=c, padx=3, pady=3)
+        self.cap_pose = PoseEntry(box)
+        self.cap_pose.pack(padx=10, pady=6)
+        button(box, "Appliquer cette pose", self.apply_pose).pack(fill="x", padx=12, pady=(0, 10))
+        box = section(tab, "Statistiques de la capture")
+        self.cap_stats = ctk.CTkLabel(box, text="—", font=font(11, mono=True), text_color=T.INK, justify="left")
+        self.cap_stats.pack(anchor="w", padx=12, pady=8)
 
-        ana = ttk.LabelFrame(side, text="ANALYSE DES CAPTURES", padding=8)
-        ana.pack(fill="x", pady=(10, 0))
-        self.grid_on, self.seg_on = tk.BooleanVar(), tk.BooleanVar()
-        ttk.Checkbutton(ana, text="Grid map (5 cm)", variable=self.grid_on, command=self.update_analysis).pack(anchor="w")
-        ttk.Checkbutton(ana, text="Segments (carte vectorielle)", variable=self.seg_on,
-                        command=self.update_analysis).pack(anchor="w")
+    def _tab_processing(self, tab) -> None:
+        tab.pack(fill="both", expand=True)
+        box = section(tab, "Filtres (affichage et analyse)")
+        self.f_min = LabeledSlider(box, "Portée minimale", 0, 1, 0.05, "{:.2f} m", self._filters_changed)
+        self.f_max = LabeledSlider(box, "Portée maximale", 0.5, 12, 12, "{:.1f} m", self._filters_changed)
+        self.f_int = LabeledSlider(box, "Intensité minimale", 0, 255, 0, "{:.0f}", self._filters_changed, steps=255)
+        for s in (self.f_min, self.f_max, self.f_int):
+            s.pack(fill="x", padx=12, pady=6)
+        ctk.CTkLabel(box, text="Les exports gardent toujours les mesures brutes.", font=font(10),
+                     text_color=T.MUTED).pack(pady=(0, 8))
+        box = section(tab, "Grid map (carte d'occupation)")
+        self.grid_switch = ctk.CTkSwitch(box, text="Afficher la grid map", progress_color=T.ACCENT,
+                                         command=self.schedule_analysis)
+        self.grid_switch.pack(anchor="w", padx=12, pady=(10, 4))
+        self.grid_res = ctk.CTkSegmentedButton(box, values=list(GRID_RES), command=lambda _: self.schedule_analysis(),
+                                               selected_color=T.ACCENT, selected_hover_color=T.ACCENT_HOVER,
+                                               unselected_color=T.SURFACE)
+        self.grid_res.set("5 cm")
+        self.grid_res.pack(padx=12, pady=(0, 10), anchor="w")
+        box = section(tab, "Carte vectorielle (segments)")
+        self.seg_switch = ctk.CTkSwitch(box, text="Extraire les murs des captures", progress_color=T.ACCENT,
+                                        command=self.schedule_analysis)
+        self.seg_switch.pack(anchor="w", padx=12, pady=10)
+        box = section(tab, "Vue")
+        self.view_range = LabeledSlider(box, "Taille de la vue (recentrer)", 1, 12, 5, "± {:.1f} m", lambda v: None)
+        self.view_range.pack(fill="x", padx=12, pady=10)
+        box = section(tab, "Résultat de l'analyse")
+        self.analysis_label = ctk.CTkLabel(box, text="Active la grid map ou les segments.", font=font(11, mono=True),
+                                           text_color=T.INK, justify="left")
+        self.analysis_label.pack(anchor="w", padx=12, pady=8)
 
-        exp = ttk.LabelFrame(side, text="IMPORTER / EXPORTER", padding=8)
-        exp.pack(fill="x", pady=(10, 0))
-        ttk.Button(exp, text="Importer des fichiers CSV…", command=self.import_files).pack(fill="x", pady=(0, 4))
-        ttk.Button(exp, text="Image de la carte (PNG)", command=self.export_png).pack(fill="x")
-        ttk.Button(exp, text="Tableau complet des points (CSV)", command=self.export_table).pack(fill="x", pady=4)
-        ttk.Button(exp, text="Fichiers pour le TP  →  data/scans", command=self.export_tp).pack(fill="x")
+    def _tab_data(self, tab) -> None:
+        tab.pack(fill="both", expand=True)
+        box = section(tab, "Importer")
+        button(box, "📂  Importer des fichiers…", self.import_files).pack(fill="x", padx=12, pady=(12, 4))
+        ctk.CTkLabel(box, text="Session .json, tableau LidarScope, scans CSV\n(TP, RobotControl, MapTool, LD06)",
+                     font=font(10), text_color=T.MUTED).pack(pady=(0, 10))
+        box = section(tab, "Exporter")
+        button(box, "💾  Session complète (JSON ouvert)", self.export_session, primary=True).pack(fill="x", padx=12, pady=(12, 2))
+        ctk.CTkLabel(box, text="Recommandé : relisible ici et compréhensible par tout\nprogramme, site web ou IA "
+                     "(unités, repères et colonnes\ndécrits dans le fichier).", font=font(10),
+                     text_color=T.MUTED, justify="left").pack(padx=12, pady=(0, 8), anchor="w")
+        for txt, fn in (("📊  Tableau de points (CSV)", self.export_table),
+                        ("🖼  Image de la carte (PNG)", self.export_png),
+                        ("📐  Segments (TXT, format du module)", self.export_segments),
+                        ("📁  Fichiers pour le TP → data/scans", self.export_tp)):
+            button(box, txt, fn, anchor="w").pack(fill="x", padx=12, pady=3)
+        ctk.CTkFrame(box, fg_color="transparent", height=8).pack()
 
-        tel = ttk.LabelFrame(side, text="TÉLÉMÉTRIE", padding=8)
-        tel.pack(fill="x", pady=(10, 0))
-        self.tel_var = tk.StringVar(value="—")
-        ttk.Label(tel, textvariable=self.tel_var, style="Big.TLabel", justify="left").pack(anchor="w")
-
-    def _build_map(self, parent: tk.Frame) -> None:
-        frame = tk.Frame(parent, bg=BG)
-        frame.pack(side="left", fill="both", expand=True)
-        self.fig = Figure(facecolor=BG)
-        self.ax = self.fig.add_subplot(111, facecolor="#0f1216")
-        self.ax.set_aspect("equal", adjustable="box")
-        self.ax.grid(True, color="#2b313b", lw=0.6)
-        self.ax.tick_params(colors=MUTED)
-        for spine in self.ax.spines.values():
-            spine.set_color("#2b313b")
-        self.ax.set_xlabel("x (m)", color=MUTED)
-        self.ax.set_ylabel("y (m)", color=MUTED)
-        self.fig.subplots_adjust(left=0.06, right=0.98, top=0.97, bottom=0.07)
-        self.live_art = self.ax.scatter([], [], s=5, c=LIVE_COLOR, label="direct", zorder=3)
-        (self.robot_art,) = self.ax.plot([], [], "-", color="#ff4757", lw=2.5, zorder=4)
-        (self.robot_dot,) = self.ax.plot([], [], "o", color="#ff4757", ms=8, zorder=4)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=frame)
-        toolbar = NavigationToolbar2Tk(self.canvas, frame, pack_toolbar=False)
-        toolbar.update()
-        toolbar.pack(side="bottom", fill="x")
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    def _build_statusbar(self) -> None:
-        self.status_var = tk.StringVar(value="Choisis un port et clique sur Connecter, ou essaie la Démo.")
-        tk.Label(self.root, textvariable=self.status_var, bg=PANEL, fg=MUTED, anchor="w", padx=10).pack(fill="x", side="bottom")
-
-    # ------------------------------------------------------------------ connexion
+    # ================================================================== connexion
     def refresh_ports(self) -> None:
-        ports = list_ports()
-        self.port_box["values"] = ports
-        if ports and self.port_var.get() not in ports:
-            self.port_var.set(ports[0])
-        self.status(f"{len(ports)} port(s) série trouvé(s)" if ports else "Aucun port série : branche l'ESP32")
+        ports = list_ports() or ["—"]
+        self.port_menu.configure(values=ports)
+        if self.port_menu.get() not in ports:
+            self.port_menu.set(ports[0])
+        self.status(f"{len(ports)} port(s) série trouvé(s)." if ports != ["—"] else "Aucun port série : branche l'ESP32.")
 
     def toggle_connect(self) -> None:
         if self.source:
             self.disconnect()
             return
-        port = self.port_var.get()
-        if not port:
-            messagebox.showwarning("Port", "Choisis d'abord un port série (bouton ⟳ pour actualiser).")
+        port = self.port_menu.get()
+        if port == "—":
+            messagebox.showwarning("Port série", "Aucun port sélectionné. Branche l'ESP32 puis clique sur ↻.")
             return
-        self._start(SerialSource(port, int(self.baud_var.get()), self.events))
+        self._start(SerialSource(port, int(self.baud_menu.get()), self.events))
 
     def start_demo(self) -> None:
         self.disconnect()
         self._start(DemoSource(self.events))
 
     def _start(self, source) -> None:
-        self.source = source
-        self.scan_count = 0
-        self._needs_recenter = True
+        self.source, self.scan_count, self._framed = source, 0, False
         source.start()
-        self.connect_btn.configure(text="Déconnecter")
-        self.led.configure(fg="#f1c40f")
+        self.connect_btn.configure(text="Déconnecter", fg_color=T.DANGER, hover_color="#c0392b")
+        self.led.configure(text_color=T.WARN)
 
     def disconnect(self) -> None:
         if self.source:
             self.source.stop()
             self.source = None
-        self.connect_btn.configure(text="Connecter")
-        self.led.configure(fg="#636e72")
+        self.connect_btn.configure(text="Connecter", fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
+        self.led.configure(text_color=T.MUTED)
 
     def quit(self) -> None:
         self.disconnect()
+        for job in (self._tick_job, self._analysis_job):
+            if job:
+                self.root.after_cancel(job)
+        self.root.quit()
         self.root.destroy()
 
-    # ------------------------------------------------------------------ boucle d'affichage
+    # ================================================================== boucle temps réel
     def _tick(self) -> None:
-        latest = None
+        got_scan = False
         while True:
             try:
                 ev = self.events.get_nowait()
             except queue.Empty:
                 break
             if ev.kind == "scan":
-                latest = ev.payload
+                got_scan = True
                 self.scan_count += 1
                 self.scan_times.append(time.monotonic())
+                if not self.paused:
+                    self.recent.append(ev.payload)
             elif ev.kind == "telemetry":
-                name, value = ev.payload
-                self.telemetry[name] = value
+                self.telemetry[ev.payload[0]] = ev.payload[1]
             elif ev.kind == "status":
                 self.conn_label.configure(text=ev.payload)
                 self.status(ev.payload)
             elif ev.kind == "error":
-                self.status(f"Erreur : {ev.payload}")
-                self.led.configure(fg="#e74c3c")
-                messagebox.showerror("Port série", f"{ev.payload}\n\nLe moniteur série Arduino est-il encore ouvert ?")
+                self.led.configure(text_color=T.DANGER)
                 self.disconnect()
-        if latest is not None:
-            self.led.configure(fg=ACCENT)
+                messagebox.showerror("Port série", f"{ev.payload}\n\nLe moniteur série Arduino est-il encore ouvert ?")
+        if got_scan:
+            self.led.configure(text_color=T.ACCENT)
             if not self.paused:
-                self.live = latest
-                self._draw_live()
-        self._update_texts()
-        self.root.after(REFRESH_MS, self._tick)
+                self._redraw_live()
+        self._tick_job = self.root.after(REFRESH_MS, self._tick)
 
-    def _draw_live(self) -> None:
-        if self.live is None:
-            return
-        pose = self.current_pose(quiet=True) or Pose()
-        pts = self.live.filtered().global_points(pose)
-        self.live_art.set_offsets(pts if len(pts) else np.empty((0, 2)))
-        self.robot_dot.set_data([pose.x], [pose.y])
-        self.robot_art.set_data([pose.x, pose.x + 0.3 * np.cos(pose.theta)],
-                                [pose.y, pose.y + 0.3 * np.sin(pose.theta)])
-        if self._needs_recenter:
-            self.recenter()
-            self._needs_recenter = False
-        self.canvas.draw_idle()
+    @property
+    def live(self) -> Scan | None:
+        return self.recent[-1] if self.recent else None
 
-    def _update_texts(self) -> None:
-        if self.live is None:
-            return
-        s = self.live.filtered()
-        freq = 0.0
-        if len(self.scan_times) >= 2:
-            freq = (len(self.scan_times) - 1) / max(self.scan_times[-1] - self.scan_times[0], 1e-6)
-        lines = [f"Scans reçus  {self.scan_count:>8d}",
-                 f"Fréquence    {freq:>6.1f} /s",
-                 f"Points       {len(self.live):>8d}",
-                 f"Sans écho    {100 * (1 - len(s) / max(len(self.live), 1)):>6.0f} %"]
-        if len(s):
-            k = int(np.argmin(s.ranges_m))
-            lines.append(f"Plus proche  {s.ranges_m[k]:>5.2f} m à {s.angles_deg[k]:.0f}°")
-            for name, ang in (("Devant", 0), ("Gauche", 90), ("Derrière", 180), ("Droite", 270)):
-                sel = np.abs((s.angles_deg - ang + 180) % 360 - 180) <= 10
-                val = f"{np.median(s.ranges_m[sel]):5.2f} m" if sel.any() else "   —"
-                lines.append(f"{name:<12s} {val}")
-        if self.paused:
-            lines.append("⏸ EN PAUSE")
-        self.stats_var.set("\n".join(lines))
-        self.tel_var.set("\n".join(f"{k:<14s} {v:>10.1f}" for k, v in self.telemetry.items()) or "—")
-
-    # ------------------------------------------------------------------ actions
-    def toggle_pause(self) -> None:
-        self.paused = not self.paused
-        self.pause_btn.configure(text="▶ Reprendre (Espace)" if self.paused else "⏸ Pause (Espace)")
-        self.status("Pause : l'image est figée, tu peux la capturer." if self.paused else "Direct repris.")
-
-    def recenter(self) -> None:
-        pose = self.current_pose(quiet=True) or Pose()
-        r = float(self.range_var.get())
-        self.ax.set_xlim(pose.x - r, pose.x + r)
-        self.ax.set_ylim(pose.y - r, pose.y + r)
-        self.canvas.draw_idle()
-
-    def current_pose(self, quiet: bool = False) -> Pose | None:
+    def _pose(self, entry: PoseEntry, quiet: bool = True) -> Pose | None:
         try:
-            return Pose(*(float(v.get().replace(",", ".")) for v in self.pose_vars))
+            return Pose(*entry.get())
         except ValueError:
             if not quiet:
                 messagebox.showwarning("Pose", "x, y et θ doivent être des nombres (ex. 1.25).")
             return None
 
-    def capture(self) -> None:
-        if self.live is None:
-            self.status("Rien à capturer : pas encore de scan reçu.")
+    def _redraw_live(self) -> None:
+        live = self.live
+        pose = self._pose(self.pose_entry) or Pose()
+        self.map.draw_robot(pose)
+        if live is None:
             return
-        pose = self.current_pose()
+        shown = self.filters.apply(live).with_pose(pose)
+        segs = scan_to_segments(shown) if self.live_seg_switch.get() else []
+        self.map.draw_live(shown, self.color_mode.get() == "Intensité", segs)
+        if not self._framed:
+            self.recenter()
+            self._framed = True
+        self._update_live_panel(live)
+
+    def _update_live_panel(self, live: Scan) -> None:
+        st = scan_stats(live, self.filters)
+        freq = 0.0
+        if len(self.scan_times) >= 2:
+            freq = (len(self.scan_times) - 1) / max(self.scan_times[-1] - self.scan_times[0], 1e-6)
+        self.cards["Points"].set(f"{st['points']}", T.INK if st["points"] >= 300 else T.WARN)
+        self.cards["Tours / s"].set(f"{freq:.1f}")
+        self.cards["Sans écho"].set(f"{st['no_echo_pct']:.0f} %", T.INK if st["no_echo_pct"] < 30 else T.WARN)
+        if "nearest" in st:
+            r, a = st["nearest"]
+            self.cards["Plus proche"].set(f"{r:.2f} m", T.DANGER if r < 0.2 else T.INK)
+            for name, val in st["directions"].items():
+                self.dir_labels[name].configure(text=f"{val:.2f} m" if val is not None else "—")
+        self.tel_label.configure(text="\n".join(f"{k:<16s}{v:>10.1f}" for k, v in self.telemetry.items()) or "—")
+
+    # ================================================================== actions carte
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+        self.pause_btn.configure(text="▶  Reprendre" if self.paused else "⏸  Pause",
+                                 fg_color=T.WARN if self.paused else T.SURFACE_2,
+                                 text_color="#000" if self.paused else T.INK)
+        self.status("Image figée : tu peux la capturer (C)." if self.paused else "Direct repris.")
+
+    def toggle_ruler(self) -> None:
+        on = not self.map.ruler_mode
+        self.map.set_ruler(on)
+        self.ruler_btn.configure(fg_color=T.WARN if on else T.SURFACE_2, text_color="#000" if on else T.INK)
+        self.status("Règle : clique deux points sur la carte." if on else "Règle désactivée.")
+
+    def recenter(self) -> None:
+        self.map.frame(self._pose(self.pose_entry) or Pose(), self.view_range.get())
+
+    # ================================================================== captures
+    def capture(self) -> None:
+        if not self.recent:
+            self.status("Rien à capturer : aucun scan reçu.")
+            return
+        pose = self._pose(self.pose_entry, quiet=False)
         if pose is None:
             return
-        cap = self._add_capture(self.live.with_pose(pose))
-        self.status(f"Scan {cap.number} capturé ({len(cap.scan)} points, pose {pose.x:.2f}, {pose.y:.2f}, {pose.theta_deg:.0f}°).")
+        n_avg = int(round(self.avg_slider.get()))
+        scan = average_scans(list(self.recent)[-n_avg:]).with_pose(pose)
+        cap = self._add_capture(scan)
+        self.status(f"{cap.title} capturé : {len(scan)} points, moyenne de {min(n_avg, len(self.recent))} tour(s), "
+                    f"pose ({pose.x:.2f}, {pose.y:.2f}, {pose.theta_deg:.0f}°).")
 
     def _add_capture(self, scan: Scan, label: str = "") -> Capture:
         n = max((c.number for c in self.captures), default=0) + 1
-        color = CAPTURE_COLORS[(n - 1) % len(CAPTURE_COLORS)]
-        cap = Capture(n, scan, color)
+        cap = Capture(n, scan, T.CAPTURE_COLORS[(n - 1) % len(T.CAPTURE_COLORS)], label, True, now_utc())
         self.captures = self.captures + [cap]
-        self.tree.insert("", "end", iid=str(n), text=f"● {label or f'Scan {n}'}", values=self._row(cap), tags=(color,))
-        self.tree.tag_configure(color, foreground=color)
+        self._refresh_capture_list()
         self._draw_capture(cap)
+        self.select(n)
         return cap
 
-    @staticmethod
-    def _row(cap: Capture) -> tuple:
-        p = cap.scan.pose
-        return (len(cap.scan.filtered()), f"{p.x:.2f}, {p.y:.2f}, {p.theta_deg:.0f}°")
-
     def _draw_capture(self, cap: Capture) -> None:
-        old = self.artists.pop(cap.number, None)
-        if old is not None:
-            old.remove()
-        if cap.visible:
-            pts = cap.scan.filtered().global_points()
-            self.artists[cap.number] = self.ax.scatter(pts[:, 0], pts[:, 1], s=6, c=cap.color, zorder=2)
-        self.update_analysis()
+        self.map.draw_capture(cap.number, self.filters.apply(cap.scan) if cap.visible else None, cap.color)
+        self.schedule_analysis()
 
-    def _selected(self) -> Capture | None:
-        sel = self.tree.selection()
-        if not sel:
-            self.status("Sélectionne d'abord une capture dans la liste.")
-            return None
-        return next(c for c in self.captures if c.number == int(sel[0]))
+    def _find(self, number: int | None) -> Capture | None:
+        return next((c for c in self.captures if c.number == number), None)
 
     def _replace(self, new: Capture) -> None:
         self.captures = [new if c.number == new.number else c for c in self.captures]
-        self.tree.item(str(new.number), values=self._row(new))
         self._draw_capture(new)
+        self._refresh_capture_list()
 
-    def _on_select_capture(self, _event) -> None:
-        sel = self.tree.selection()
-        if sel:
-            p = next(c for c in self.captures if c.number == int(sel[0])).scan.pose
-            for var, v in zip(self.pose_vars, (p.x, p.y, p.theta_deg)):
-                var.set(f"{v:g}")
+    def _refresh_capture_list(self) -> None:
+        for w in self.capture_list.winfo_children():
+            w.destroy()
+        if not self.captures:
+            ctk.CTkLabel(self.capture_list, text="Aucune capture.\nOnglet Direct → Capturer, ou Données → Importer.",
+                         font=font(12), text_color=T.MUTED).pack(pady=20)
+            return
+        for cap in self.captures:
+            sel = cap.number == self.selected
+            row = ctk.CTkFrame(self.capture_list, fg_color=T.SURFACE_2, corner_radius=10, border_width=2,
+                               border_color=cap.color if sel else T.SURFACE_2)
+            row.pack(fill="x", pady=3)
+            ctk.CTkLabel(row, text="●", font=font(20), text_color=cap.color if cap.visible else T.MUTED,
+                         width=24).pack(side="left", padx=(10, 4))
+            info = ctk.CTkFrame(row, fg_color="transparent")
+            info.pack(side="left", fill="x", expand=True, pady=6)
+            p = cap.scan.pose
+            ctk.CTkLabel(info, text=cap.title, font=font(13, "bold"), text_color=T.INK, anchor="w").pack(fill="x")
+            ctk.CTkLabel(info, text=f"{int((cap.scan.ranges_m > 0).sum())} pts · ({p.x:.2f}, {p.y:.2f}, {p.theta_deg:.0f}°)",
+                         font=font(10, mono=True), text_color=T.MUTED, anchor="w").pack(fill="x")
+            button(row, "🗑", lambda n=cap.number: self.delete_capture(n), width=32, height=30).pack(side="right", padx=(2, 8))
+            button(row, "👁" if cap.visible else "◌", lambda n=cap.number: self.toggle_visible(n),
+                   width=32, height=30).pack(side="right")
+            for w in (row, info, *info.winfo_children()):
+                w.bind("<Button-1>", lambda e, n=cap.number: self.select(n))
 
-    def toggle_visible(self) -> None:
-        cap = self._selected()
+    def select(self, number: int) -> None:
+        cap = self._find(number)
+        if cap is None:
+            return
+        self.selected = number
+        p = cap.scan.pose
+        self.cap_pose.set(p.x, p.y, p.theta_deg)
+        self.sel_label.configure(text=f"● {cap.title}", text_color=cap.color)
+        st = scan_stats(cap.scan, self.filters)
+        txt = [f"Points           {st['points']}", f"Avec écho        {st['kept']}",
+               f"Sans écho        {st['no_echo_pct']:.0f} %"]
+        if "nearest" in st:
+            txt += [f"Plus proche      {st['nearest'][0]:.2f} m à {st['nearest'][1]:.0f}°",
+                    f"Plus loin        {st['max_range']:.2f} m", f"Intensité moy.   {st['mean_intensity']:.0f}"]
+        txt.append(f"Capturé          {cap.captured_utc[11:19] or '—'} UTC")
+        self.cap_stats.configure(text="\n".join(txt))
+        self._refresh_capture_list()
+
+    def nudge(self, dx: int, dy: int, dtheta: int) -> None:
+        cap = self._find(self.selected)
+        if cap is None:
+            self.status("Sélectionne d'abord une capture.")
+            return
+        step_m, step_deg = NUDGES[self.nudge_mode.get()]
+        new = replace(cap, scan=cap.scan.with_pose(cap.scan.pose.moved(dx * step_m, dy * step_m, dtheta * step_deg)))
+        self._replace(new)
+        p = new.scan.pose
+        self.cap_pose.set(p.x, p.y, p.theta_deg)
+
+    def apply_pose(self) -> None:
+        cap, pose = self._find(self.selected), self._pose(self.cap_pose, quiet=False)
+        if cap and pose:
+            self._replace(replace(cap, scan=cap.scan.with_pose(pose)))
+
+    def toggle_visible(self, number: int) -> None:
+        cap = self._find(number)
         if cap:
             self._replace(replace(cap, visible=not cap.visible))
 
-    def apply_pose(self) -> None:
-        cap, pose = self._selected(), self.current_pose()
-        if cap and pose:
-            self._replace(replace(cap, scan=cap.scan.with_pose(pose)))
-            self.status(f"Pose du scan {cap.number} mise à jour.")
+    def delete_capture(self, number: int) -> None:
+        cap = self._find(number)
+        if cap and messagebox.askyesno("Supprimer", f"Supprimer {cap.title} ?"):
+            self.captures = [c for c in self.captures if c.number != number]
+            self.map.draw_capture(number, None)
+            self.selected = None if self.selected == number else self.selected
+            self._refresh_capture_list()
+            self.schedule_analysis()
 
-    def delete_capture(self) -> None:
-        cap = self._selected()
-        if cap and messagebox.askyesno("Supprimer", f"Supprimer le scan {cap.number} ?"):
-            self.captures = [c for c in self.captures if c.number != cap.number]
-            self.tree.delete(str(cap.number))
-            self._draw_capture(replace(cap, visible=False))
+    # ================================================================== traitement
+    def _filters_changed(self, _v: float) -> None:
+        self.filters = Filters(self.f_min.get(), max(self.f_max.get(), self.f_min.get() + 0.01), int(self.f_int.get()))
+        if self._analysis_job:
+            self.root.after_cancel(self._analysis_job)
+        self._analysis_job = self.root.after(250, self._refilter)
 
-    # ------------------------------------------------------------------ analyse
-    def update_analysis(self) -> None:
-        """Recalcule la grid map / les segments à partir des captures visibles."""
-        from ..gridmap import grid_for_scans, update_grid
-        from ..vectormap import build_vector_map
+    def _refilter(self) -> None:
+        for cap in self.captures:
+            self.map.draw_capture(cap.number, self.filters.apply(cap.scan) if cap.visible else None, cap.color)
+        self._redraw_live()
+        self.run_analysis()
 
-        for art in self.analysis_artists:
-            art.remove()
-        self.analysis_artists = []
-        scans = [c.scan for c in self.captures if c.visible]
-        if scans and self.grid_on.get():
-            grid = grid_for_scans(scans, 0.05)
+    def schedule_analysis(self) -> None:
+        if self._analysis_job:
+            self.root.after_cancel(self._analysis_job)
+        self._analysis_job = self.root.after(150, self.run_analysis)
+
+    def run_analysis(self) -> None:
+        self._analysis_job = None
+        scans = [self.filters.apply(c.scan) for c in self.captures if c.visible]
+        scans = [s for s in scans if len(s)]
+        grid, segs, lines = None, [], []
+        if scans and self.grid_switch.get():
+            grid = grid_for_scans(scans, GRID_RES[self.grid_res.get()])
             for s in scans:
                 grid = update_grid(grid, s)
-            self.analysis_artists.append(self.ax.imshow(
-                1 - grid.probability(), cmap="gray", vmin=0, vmax=1, origin="lower",
-                extent=grid.extent(), alpha=0.55, zorder=0))
-        if scans and self.seg_on.get():
-            features = build_vector_map(scans).features
-            for f in features:
-                sg = f.segment
-                (line,) = self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color="#ffffff", lw=2.2, zorder=5)
-                self.analysis_artists.append(line)
-            self.status(f"{len(features)} segment(s) extraits des captures visibles.")
-        self.canvas.draw_idle()
+            ny, nx = grid.shape
+            lines += [f"Grid map  {nx} × {ny} cellules", f"  occupées  {int(grid.occupied_mask().sum())}",
+                      f"  libres    {int(grid.free_mask().sum())}"]
+        if scans and self.seg_switch.get():
+            vmap = build_vector_map(scans)
+            segs = vmap.segments
+            total = sum(s.length for s in segs)
+            lines += [f"Segments  {len(segs)}", f"  longueur totale  {total:.2f} m"]
+        self.last_segments = segs
+        self.map.draw_analysis(grid, segs)
+        self.analysis_label.configure(text="\n".join(lines) or "Active la grid map ou les segments.")
 
-    # ------------------------------------------------------------------ import
+    # ================================================================== import / export
     def import_files(self) -> None:
-        paths = filedialog.askopenfilenames(title="Importer des scans", filetypes=[("Scans CSV", "*.csv *.txt")])
+        paths = filedialog.askopenfilenames(title="Importer", filetypes=[("Données lidar", "*.json *.csv *.txt"),
+                                                                          ("Tous", "*.*")])
         added = 0
         for path in paths:
             try:
-                for label, scan in read_any_csv(Path(path)):
+                for label, scan in read_any(path):
                     self._add_capture(scan, label)
                     added += 1
             except (ValueError, OSError, KeyError) as exc:
-                messagebox.showerror("Import", f"{Path(path).name} : {exc}")
+                messagebox.showerror("Import", f"{Path(path).name} :\n{exc}")
         if added:
-            self.status(f"{added} scan(s) importé(s). Sélectionne-en un pour corriger sa pose.")
+            self.status(f"{added} scan(s) importé(s).")
 
-    # ------------------------------------------------------------------ exports
-    def export_png(self) -> None:
-        path = filedialog.asksaveasfilename(defaultextension=".png", initialfile="carte_salle.png",
-                                            filetypes=[("Image PNG", "*.png")])
-        if path:
-            self.fig.savefig(path, dpi=200, facecolor=BG)
-            self.status(f"Image enregistrée : {path}")
+    def _need_captures(self) -> bool:
+        if not self.captures:
+            messagebox.showinfo("Export", "Aucune capture. Capture au moins un scan (onglet Direct).")
+            return False
+        return True
+
+    def _ask_save(self, ext: str, name: str, kind: str) -> str:
+        return filedialog.asksaveasfilename(defaultextension=ext, initialfile=name, filetypes=[(kind, f"*{ext}")])
+
+    def export_session(self) -> None:
+        if self._need_captures() and (path := self._ask_save(".json", "session_salle.lidar.json", "Session LidarScope")):
+            extra = {"display_filters": self.filters.as_dict(),
+                     "segments_xyxy_m": [list(s.as_tuple()) for s in self.last_segments]}
+            save_session(self.captures, path, extra)
+            self.status(f"Session enregistrée : {path}")
 
     def export_table(self) -> None:
-        if not self.captures:
-            messagebox.showinfo("Export", "Aucune capture : capture au moins un scan.")
+        if self._need_captures() and (path := self._ask_save(".csv", "points_salle.csv", "Tableau CSV")):
+            save_table(self.captures, path)
+            self.status(f"Tableau enregistré : {path}")
+
+    def export_png(self) -> None:
+        if path := self._ask_save(".png", "carte_salle.png", "Image PNG"):
+            self.map.fig.savefig(path, dpi=200, facecolor=T.BG)
+            self.status(f"Image enregistrée : {path}")
+
+    def export_segments(self) -> None:
+        if not self.last_segments:
+            messagebox.showinfo("Segments", "Active d'abord « Extraire les murs » dans l'onglet Traitement.")
             return
-        path = filedialog.asksaveasfilename(defaultextension=".csv", initialfile="points_salle.csv",
-                                            filetypes=[("Tableau CSV", "*.csv")])
-        if not path:
-            return
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["scan", "x_robot_m", "y_robot_m", "theta_robot_deg", "angle_deg", "distance_m",
-                        "intensite", "x_lidar_m", "y_lidar_m", "x_carte_m", "y_carte_m"])
-            for cap in self.captures:
-                s, p = cap.scan, cap.scan.pose
-                loc, glob = s.local_points(), s.global_points()
-                for k in range(len(s)):
-                    w.writerow([cap.number, p.x, p.y, p.theta_deg, f"{s.angles_deg[k]:.3f}",
-                                f"{s.ranges_m[k]:.4f}", int(s.intensities[k]),
-                                f"{loc[k, 0]:.4f}", f"{loc[k, 1]:.4f}", f"{glob[k, 0]:.4f}", f"{glob[k, 1]:.4f}"])
-        self.status(f"Tableau enregistré : {path} (tous les points, y compris sans écho : distance 0)")
+        if path := self._ask_save(".txt", "carte_vectorielle.txt", "Segments"):
+            from ..vectormap import Feature
+            save_vector_map(VectorMap(tuple(Feature(s) for s in self.last_segments), len(self.captures)), path)
+            self.status(f"Segments enregistrés : {path}")
 
     def export_tp(self) -> None:
-        if not self.captures:
-            messagebox.showinfo("Export", "Aucune capture : capture au moins un scan.")
+        if not self._need_captures():
             return
-        prefix = simpledialog.askstring("Fichiers TP", "Nom des fichiers (ex. salle) :", initialvalue="salle")
-        if not prefix:
-            return
-        folder = Path("data/scans")
-        paths = [save_scan(c.scan, folder / f"{prefix}_{c.number:02d}.csv") for c in self.captures]
-        self.status(f"{len(paths)} fichier(s) écrits dans {folder.resolve()} (utilisables par viewer, gridmap, vectormap)")
+        dialog = ctk.CTkInputDialog(text="Nom des fichiers (ex. salle) :", title="Fichiers pour le TP")
+        prefix = (dialog.get_input() or "").strip()
+        if prefix:
+            paths = [save_scan(c.scan, Path("data/scans") / f"{prefix}_{c.number:02d}.csv") for c in self.captures]
+            self.status(f"{len(paths)} fichier(s) écrits dans {Path('data/scans').resolve()}")
 
+    # ================================================================== divers
     def status(self, text: str) -> None:
         self.status_var.set(text)
 
-
-def read_any_csv(path: Path) -> list[tuple[str, Scan]]:
-    """Lit un fichier de scan : format TP / RobotControl / MapTool / LD06 (via load_scan),
-    ou le « tableau complet » exporté par LidarScope (plusieurs scans, colonne 'scan')."""
-    with open(path, encoding="utf-8", errors="replace") as f:
-        first = next((line for line in f if line.strip() and not line.startswith("#")), "")
-    if not first.startswith("scan,"):
-        return [(path.stem, load_scan(path))]
-    groups: dict[str, list[dict]] = collections.defaultdict(list)
-    with open(path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            groups[row["scan"]].append(row)
-    out = []
-    for num, rows in groups.items():
-        r0 = rows[0]
-        pose = Pose(float(r0["x_robot_m"]), float(r0["y_robot_m"]), float(r0["theta_robot_deg"]))
-        col = lambda k: np.array([float(r[k]) for r in rows])  # noqa: E731
-        out.append((f"{path.stem} #{num}", Scan(col("angle_deg"), col("distance_m"), col("intensite"), pose)))
-    return out
+    @staticmethod
+    def _typing(event) -> bool:
+        return "entry" in str(event.widget).lower()
 
 
 def main() -> None:
-    root = tk.Tk()
+    ctk.set_appearance_mode("dark")
+    root = ctk.CTk()
     LidarScope(root)
     root.mainloop()
 

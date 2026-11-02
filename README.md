@@ -18,7 +18,7 @@ pip install pytest
 
 | Étape | Commande |
 | --- | --- |
-| **LidarScope** : direct, captures colorées, import/export, analyse | `python -m lidar.scope` |
+| **LidarScope** : direct, captures colorées, recalage, filtres, grid map, segments, import/export | `python -m lidar.scope` ou double-clic sur `LidarScope.bat` |
 | 1. Acquisition (ESP32 flashé avec `firmware/ESP32_LD06_CSV`) | `python -m lidar.acquire --port COM5 --count 3 --pose 0,0,0 --out data/scans/pos1` |
 | 2. Visualisation / recalage manuel | `python -m lidar.viewer "data/scans/*.csv"` (touche `s` : sauver les poses) |
 | 3. Grid map : création | `python -m lidar.gridmap build "data/scans/*.csv" --res 0.05` |
@@ -26,6 +26,14 @@ pip install pytest
 | 4-5. Carte vectorielle | `python -m lidar.vectormap "data/scans/*.csv" --grid out/grid.npz` |
 | Sans robot | `python -m lidar.simulate --out data/simu` |
 | Tests | `python -m pytest` |
+
+## Format d'échange `*.lidar.json`
+
+LidarScope exporte une session au format JSON **auto-décrit** : le fichier contient lui-même la
+description des unités (m, °), du sens des angles, des repères lidar / salle, de la formule de la pose
+et de chaque colonne. Les mesures brutes (angle, distance, intensité) ne sont jamais filtrées ; les
+colonnes x/y sont des valeurs dérivées. N'importe quel programme, site ou IA peut donc l'exploiter, et
+LidarScope le réimporte sans perte (voir `src/lidar/scope/session.py`).
 
 ## Organisation
 
