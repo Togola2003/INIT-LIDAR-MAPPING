@@ -18,6 +18,7 @@ pip install pytest
 
 | Étape | Commande |
 | --- | --- |
+| **LidarScope** : direct, captures colorées, import/export, analyse | `python -m lidar.scope` |
 | 1. Acquisition (ESP32 flashé avec `firmware/ESP32_LD06_CSV`) | `python -m lidar.acquire --port COM5 --count 3 --pose 0,0,0 --out data/scans/pos1` |
 | 2. Visualisation / recalage manuel | `python -m lidar.viewer "data/scans/*.csv"` (touche `s` : sauver les poses) |
 | 3. Grid map : création | `python -m lidar.gridmap build "data/scans/*.csv" --res 0.05` |
