@@ -1,0 +1,21 @@
+# Environnement Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Supports de cours fournis par le professeur (non versionnés : volumineux et non produits par nous)
+RESSOURCES/
+Cartographie-*/
+Localisation-*/
+TP LIDAR.pdf
+
+# Sorties générées (cartes, images) : on les régénère à partir des scans
+out/
+
+# Fichiers éditeur / système
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+*.egg-info/
