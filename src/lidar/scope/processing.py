@@ -46,12 +46,14 @@ def average_scans(scans: list[Scan]) -> Scan:
     valid = pool_r > 0
     pool_a, pool_r, pool_i = pool_a[valid], pool_r[valid], pool_i[valid]
     ranges = np.zeros(len(ref))
-    inten = np.zeros(len(ref))
+    inten = np.full(len(ref), np.nan)
     for k, a in enumerate(ref.angles_deg):
         near = _angle_gap(pool_a, a) <= step / 2
         if near.any():
             ranges[k] = np.median(pool_r[near])
-            inten[k] = np.median(pool_i[near])
+            vals = pool_i[near]
+            if not np.isnan(vals).all():          # intensité inconnue (Teleplot) : reste NaN
+                inten[k] = np.nanmedian(vals)
     return replace(ref, ranges_m=ranges, intensities=inten)
 
 
@@ -67,7 +69,7 @@ def scan_stats(raw: Scan, filters: Filters) -> dict:
         out.update(
             nearest=(float(s.ranges_m[k]), float(s.angles_deg[k])),
             max_range=float(s.ranges_m.max()),
-            mean_intensity=float(s.intensities.mean()),
+            mean_intensity=None if np.isnan(s.intensities).all() else float(np.nanmean(s.intensities)),
             directions={
                 name: (float(np.median(s.ranges_m[_angle_gap(s.angles_deg, ang) <= 10]))
                        if (_angle_gap(s.angles_deg, ang) <= 10).any() else None)

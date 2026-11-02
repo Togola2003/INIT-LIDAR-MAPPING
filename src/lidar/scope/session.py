@@ -41,13 +41,25 @@ DESCRIPTION = {
     "columns": {
         "angle_deg": "angle du point dans le repère lidar [0, 360[ (mesure brute convertie en sens trigonométrique)",
         "distance_m": "distance mesurée (mesure brute)",
-        "intensity": "intensité du retour (mesure brute)",
+        "intensity": "intensité du retour (mesure brute) ; null = non transmise par le format source",
         "x_lidar_m": "dérivé : distance_m * cos(angle_deg)",
         "y_lidar_m": "dérivé : distance_m * sin(angle_deg)",
         "x_map_m": "dérivé : position dans la salle, via la pose",
         "y_map_m": "dérivé : position dans la salle, via la pose",
     },
     "points_layout": "chaque capture a 'columns' (noms) et 'points' (liste de lignes, une ligne = un point)",
+    "source": "chaque capture indique le format reçu du robot et contient les lignes série BRUTES de chaque "
+              "tour utilisé (raw_tours) : on peut refaire tout le décodage depuis l'origine",
+}
+
+
+SOURCE_NOTES = {
+    "printScanTeleplot": "Reçu au format Teleplot (>lidar:x:y;...|xy, mm) : seuls x et y sont transmis. "
+                         "intensity = null (inconnue). Angle des points sans écho interpolé entre voisins. "
+                         "y corrigé du miroir de la bibliothèque LD06 (qui envoie y = -d·sin θ).",
+    "printScanCSV": "Reçu au format CSV de la bibliothèque LD06 (N,angle,distance_mm,intensité) : "
+                    "mesures complètes.",
+    "fichier": "Importé depuis un fichier.",
 }
 
 
@@ -59,6 +71,8 @@ class Capture:
     label: str = ""
     visible: bool = True
     captured_utc: str = ""
+    source: str = "fichier"                       # printScanCSV, printScanTeleplot ou fichier
+    raw_tours: tuple[tuple[str, ...], ...] = ()   # lignes série brutes de chaque tour utilisé
 
     @property
     def title(self) -> str:
@@ -69,11 +83,16 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _point_rows(scan: Scan) -> list[list[float]]:
+def _num(v: float, nd: int):
+    """Nombre JSON, ou null si inconnu (NaN)."""
+    return None if np.isnan(v) else round(float(v), nd)
+
+
+def _point_rows(scan: Scan) -> list[list]:
     loc, glob = scan.local_points(), scan.global_points()
     return [
-        [round(float(a), 3), round(float(r), 4), int(i),
-         round(float(lx), 4), round(float(ly), 4), round(float(gx), 4), round(float(gy), 4)]
+        [_num(a, 3), _num(r, 4), None if np.isnan(i) else int(i),
+         _num(lx, 4), _num(ly, 4), _num(gx, 4), _num(gy, 4)]
         for a, r, i, (lx, ly), (gx, gy) in zip(scan.angles_deg, scan.ranges_m, scan.intensities, loc, glob)
     ]
 
@@ -94,6 +113,12 @@ def session_to_dict(captures: list[Capture], extra: dict | None = None) -> dict:
                 "pose": {"x_m": c.scan.pose.x, "y_m": c.scan.pose.y, "theta_deg": c.scan.pose.theta_deg},
                 "n_points": len(c.scan),
                 "n_points_with_echo": int((c.scan.ranges_m > 0).sum()),
+                "source": {
+                    "firmware_output": c.source,
+                    "notes": SOURCE_NOTES.get(c.source, ""),
+                    "averaged_over_tours": max(len(c.raw_tours), 1),
+                    "raw_tours": [list(t) for t in c.raw_tours],
+                },
                 "columns": COLUMNS,
                 "points": _point_rows(c.scan),
             }
@@ -117,13 +142,16 @@ def load_session(path: str | Path) -> list[Capture]:
     out = []
     for c in data["captures"]:
         cols = c["columns"]
-        pts = np.array(c["points"], dtype=float).reshape(-1, len(cols))
+        rows = [[np.nan if v is None else v for v in r] for r in c["points"]]   # null -> NaN
+        pts = np.array(rows, dtype=float).reshape(-1, len(cols))
         col = {name: pts[:, k] for k, name in enumerate(cols)}
         p = c["pose"]
         scan = Scan(col["angle_deg"], col["distance_m"], col["intensity"],
                     Pose(p["x_m"], p["y_m"], p["theta_deg"]), name=c.get("label", ""))
+        src = c.get("source", {})
         out.append(Capture(int(c["id"]), scan, c.get("color", "#2ecc71"), c.get("label", ""),
-                           True, c.get("captured_utc", "")))
+                           True, c.get("captured_utc", ""), src.get("firmware_output", "fichier"),
+                           tuple(tuple(t) for t in src.get("raw_tours", []))))
     return out
 
 
@@ -140,7 +168,7 @@ def save_table(captures: list[Capture], path: str | Path) -> Path:
         for c in captures:
             p = c.scan.pose
             for row in _point_rows(c.scan):
-                w.writerow([c.number, p.x, p.y, p.theta_deg] + row)
+                w.writerow([c.number, p.x, p.y, p.theta_deg] + ["" if v is None else v for v in row])
     return path
 
 
@@ -162,6 +190,7 @@ def read_any(path: str | Path) -> list[tuple[str, Scan]]:
         r0 = rows[0]
         pose = Pose(float(r0["x_robot_m"]), float(r0["y_robot_m"]), float(r0["theta_robot_deg"]))
         inten_key = "intensity" if "intensity" in r0 else "intensite"
-        arr = {k: np.array([float(r[k]) for r in rows]) for k in ("angle_deg", "distance_m", inten_key)}
+        arr = {k: np.array([float(r[k]) if r[k] != "" else np.nan for r in rows])
+               for k in ("angle_deg", "distance_m", inten_key)}
         out.append((f"{path.stem} #{num}", Scan(arr["angle_deg"], arr["distance_m"], arr[inten_key], pose)))
     return out

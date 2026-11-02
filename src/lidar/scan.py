@@ -53,11 +53,13 @@ class Scan:
         max_range: float = LD06_MAX_RANGE_M,
         min_intensity: int = 0,
     ) -> "Scan":
-        """Retire les points sans impact, hors portée ou de trop faible intensité."""
+        """Retire les points sans impact, hors portée ou de trop faible intensité.
+
+        Une intensité inconnue (NaN, ex. données Teleplot) ne fait pas rejeter le point."""
         keep = (
             (self.ranges_m >= min_range)
             & (self.ranges_m <= max_range)
-            & (self.intensities >= min_intensity)
+            & ((self.intensities >= min_intensity) | np.isnan(self.intensities))
         )
         return replace(
             self,
@@ -109,7 +111,8 @@ def load_scan(path: str | Path, pose: Pose | None = None) -> Scan:
         raise ValueError(f"{path}: en-tête CSV introuvable")
     a_col, d_col, i_col, scale = _parse_header(header)
     try:
-        data = np.array([[float(v) for v in r] for r in rows if len(r) > max(a_col, d_col)])
+        # champ vide (intensité inconnue) -> NaN
+        data = np.array([[float(v) if v.strip() else np.nan for v in r] for r in rows if len(r) > max(a_col, d_col)])
     except ValueError as exc:
         raise ValueError(f"{path}: valeur non numérique ({exc})") from exc
     if data.size == 0:
@@ -133,7 +136,7 @@ def save_scan(scan: Scan, path: str | Path) -> Path:
         "angle_deg,distance_m,intensity",
     ]
     lines += [
-        f"{a:.3f},{r:.4f},{int(i)}"
+        f"{a:.3f},{r:.4f},{'' if np.isnan(i) else int(i)}"   # intensité inconnue -> champ vide
         for a, r, i in zip(scan.angles_deg, scan.ranges_m, scan.intensities)
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

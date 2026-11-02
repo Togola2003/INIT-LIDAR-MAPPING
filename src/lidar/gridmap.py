@@ -72,13 +72,23 @@ class OccupancyGrid:
         return self.probability() < FREE_THRESHOLD
 
 
-def create_grid(width_m: float, height_m: float, resolution: float, origin=(0.0, 0.0)) -> OccupancyGrid:
-    """Grille vide, tout « inconnu » (L = 0). Ex. 2 m x 3 m à 0,1 m -> 30 lignes x 20 colonnes."""
+def p_to_logodds(p: float) -> float:
+    """Probabilité -> log-odds : 0,5 -> 0 ; 0,7 -> +0,85 ; 0,4 -> -0,41."""
+    return float(np.log(p / (1.0 - p)))
+
+
+# États initiaux proposés par le cours : optimiste (libre), pessimiste (occupé), neutre (inconnu)
+INITIAL_STATES = {"inconnu": 0.0, "libre": p_to_logodds(0.2), "occupé": p_to_logodds(0.8)}
+
+
+def create_grid(width_m: float, height_m: float, resolution: float, origin=(0.0, 0.0),
+                initial_logodds: float = 0.0) -> OccupancyGrid:
+    """Grille vide, par défaut tout « inconnu » (L = 0). Ex. 2 m x 3 m à 0,1 m -> 30 lignes x 20 colonnes."""
     if resolution <= 0 or width_m <= 0 or height_m <= 0:
         raise ValueError("dimensions et résolution doivent être > 0")
     nx = int(np.ceil(width_m / resolution))
     ny = int(np.ceil(height_m / resolution))
-    return OccupancyGrid(np.zeros((ny, nx)), resolution, (float(origin[0]), float(origin[1])))
+    return OccupancyGrid(np.full((ny, nx), float(initial_logodds)), resolution, (float(origin[0]), float(origin[1])))
 
 
 def bresenham(i0: int, j0: int, i1: int, j1: int) -> list[tuple[int, int]]:
@@ -101,7 +111,24 @@ def bresenham(i0: int, j0: int, i1: int, j1: int) -> list[tuple[int, int]]:
             j += sj
 
 
-def update_grid(grid: OccupancyGrid, scan: Scan, min_intensity: int = 0) -> OccupancyGrid:
+def beam_cells(grid: OccupancyGrid, scan: Scan, min_intensity: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Cellules (i, j) TRAVERSÉES et cellules d'IMPACT d'un scan (étapes 3 et 4 du cours), sans doublon."""
+    s = scan.filtered(min_intensity=min_intensity)
+    pts = s.global_points()
+    ri, rj = grid.world_to_cell(s.pose.x, s.pose.y)
+    hi, hj = grid.world_to_cell(pts[:, 0], pts[:, 1])
+    free = set()
+    for i1, j1 in zip(hi, hj):
+        free.update(bresenham(int(ri), int(rj), int(i1), int(j1))[:-1])
+    impact = set(zip(hi.tolist(), hj.tolist()))
+    free -= impact
+    as_arr = lambda cells: np.array(sorted(cells), dtype=int).reshape(-1, 2)  # noqa: E731
+    f, h = as_arr(free), as_arr(impact)
+    return f[grid.inside(f[:, 0], f[:, 1])], h[grid.inside(h[:, 0], h[:, 1])]
+
+
+def update_grid(grid: OccupancyGrid, scan: Scan, min_intensity: int = 0,
+                l_free: float = L_FREE, l_occ: float = L_OCC) -> OccupancyGrid:
     """Retourne une NOUVELLE grille mise à jour avec un scan (la grille d'entrée n'est pas modifiée).
 
     1. filtrage (pas d'impact, hors portée, intensité faible) ;
@@ -109,24 +136,13 @@ def update_grid(grid: OccupancyGrid, scan: Scan, min_intensity: int = 0) -> Occu
     3. cellules traversées (sauf la dernière) -> plus libres ; cellule d'impact -> plus occupée.
     Les cellules hors de la grille sont ignorées (la grille ne s'agrandit pas).
     """
-    s = scan.filtered(min_intensity=min_intensity)
-    pts = s.global_points()
-    ri, rj = grid.world_to_cell(s.pose.x, s.pose.y)
-    hi, hj = grid.world_to_cell(pts[:, 0], pts[:, 1])
-
-    free = np.zeros_like(grid.logodds)
-    occ = np.zeros_like(grid.logodds)
-    for i1, j1 in zip(hi, hj):
-        ray = np.array(bresenham(int(ri), int(rj), int(i1), int(j1))[:-1])
-        if len(ray):
-            ok = grid.inside(ray[:, 0], ray[:, 1])
-            # une même cellule traversée par plusieurs faisceaux du même scan n'est comptée qu'une fois
-            free[ray[ok, 1], ray[ok, 0]] = L_FREE
-    ok = grid.inside(hi, hj)
-    occ[hj[ok], hi[ok]] = L_OCC
-    free[occ > 0] = 0.0  # une cellule d'impact n'est pas « libérée » par un autre faisceau du même scan
-
-    return replace(grid, logodds=np.clip(grid.logodds + free + occ, L_MIN, L_MAX))
+    # une même cellule traversée par plusieurs faisceaux du même scan n'est comptée qu'une fois,
+    # et une cellule d'impact n'est pas « libérée » par un autre faisceau du même scan
+    free_cells, hit_cells = beam_cells(grid, scan, min_intensity)
+    delta = np.zeros_like(grid.logodds)
+    delta[free_cells[:, 1], free_cells[:, 0]] = l_free
+    delta[hit_cells[:, 1], hit_cells[:, 0]] = l_occ
+    return replace(grid, logodds=np.clip(grid.logodds + delta, L_MIN, L_MAX))
 
 
 def grid_from_scan(scan: Scan, resolution: float = 0.05, margin: float = 0.3) -> OccupancyGrid:
@@ -134,16 +150,62 @@ def grid_from_scan(scan: Scan, resolution: float = 0.05, margin: float = 0.3) ->
     return update_grid(grid_for_scans([scan], resolution, margin), scan)
 
 
-def grid_for_scans(scans: list[Scan], resolution: float = 0.05, margin: float = 0.3) -> OccupancyGrid:
+def grid_for_scans(scans: list[Scan], resolution: float = 0.05, margin: float = 0.3,
+                   initial_logodds: float = 0.0) -> OccupancyGrid:
     pts = np.vstack([s.filtered().global_points() for s in scans] + [[[s.pose.x, s.pose.y] for s in scans]])
     lo = pts.min(axis=0) - margin
     hi = pts.max(axis=0) + margin
-    return create_grid(hi[0] - lo[0], hi[1] - lo[1], resolution, origin=(lo[0], lo[1]))
+    return create_grid(hi[0] - lo[0], hi[1] - lo[1], resolution, origin=(lo[0], lo[1]),
+                       initial_logodds=initial_logodds)
 
 
 def decay(grid: OccupancyGrid, factor: float = 0.95) -> OccupancyGrid:
     """Extension « durée de vie » : rapproche chaque cellule de l'inconnu (L -> 0)."""
     return replace(grid, logodds=grid.logodds * factor)
+
+
+def remove_isolated(grid: OccupancyGrid) -> OccupancyGrid:
+    """Nettoyage (§5 du cours) : une cellule occupée sans AUCUNE voisine occupée (8 voisines)
+    est probablement du bruit -> elle repasse à « inconnu »."""
+    occ = grid.occupied_mask().astype(int)
+    padded = np.pad(occ, 1)
+    neighbours = sum(np.roll(np.roll(padded, di, 0), dj, 1)
+                     for di in (-1, 0, 1) for dj in (-1, 0, 1) if (di, dj) != (0, 0))[1:-1, 1:-1]
+    isolated = (occ == 1) & (neighbours == 0)
+    return replace(grid, logodds=np.where(isolated, 0.0, grid.logodds))
+
+
+def ternary(grid: OccupancyGrid) -> np.ndarray:
+    """Modèle « binaire » du cours, avec l'inconnu en plus : 1 = occupé, 0 = libre, -1 = inconnu."""
+    return np.where(grid.occupied_mask(), 1, np.where(grid.free_mask(), 0, -1))
+
+
+GRID_ENCODINGS = {
+    "maptool": "1 = occupé, 0 = libre OU inconnu (format exact de MapTool)",
+    "ternaire": "1 = occupé, 0 = libre, -1 = inconnu (jamais observé)",
+    "proba": "probabilité d'occupation en uint8 : 0 = libre certain, 127 = inconnu, 255 = occupé certain",
+}
+
+
+def save_grid_csv(grid: OccupancyGrid, path: str | Path, encoding: str = "maptool") -> Path:
+    """Matrice CSV, première ligne = HAUT de la carte (comme MapTool), commentaire '#' en tête."""
+    if encoding == "maptool":
+        values = (ternary(grid) == 1).astype(int)
+    elif encoding == "ternaire":
+        values = ternary(grid)
+    elif encoding == "proba":
+        values = grid.to_uint8()
+    else:
+        raise ValueError(f"encodage inconnu : {encoding}")
+    ny, nx = grid.shape
+    x0, y0 = grid.origin
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    head = (f"# Grid map {nx}x{ny}, cell={grid.resolution} m ; {GRID_ENCODINGS[encoding]} ; "
+            f"coin bas-gauche = ({x0:.4f}, {y0:.4f}) m ; 1re ligne = haut de la carte")
+    rows = [",".join(str(int(v)) for v in values[j]) for j in range(ny - 1, -1, -1)]
+    path.write_text("\n".join([head] + rows) + "\n", encoding="utf-8")
+    return path
 
 
 def save_grid(grid: OccupancyGrid, path: str | Path) -> Path:

@@ -1,6 +1,7 @@
+import numpy as np
 import pytest
 
-from lidar.scope.sources import MIN_POINTS, LineParser
+from lidar.scope.sources import FORMAT_CSV, FORMAT_TELEPLOT, MIN_POINTS, LineParser
 
 
 def _csv_lines(n: int) -> list[str]:
@@ -11,9 +12,11 @@ def test_csv_scan_emitted_on_blank_line():
     p = LineParser()
     events = [ev for line in ["N,Angle(°),Distance(mm),Intensity"] + _csv_lines(150) + [""] for ev in p.feed(line)]
     assert len(events) == 1 and events[0].kind == "scan"
-    scan = events[0].payload
-    assert len(scan) == 150
-    assert scan.ranges_m[0] == pytest.approx(1.0)
+    frame = events[0].payload
+    assert frame.fmt == FORMAT_CSV and len(frame.raw) == 150      # lignes brutes conservées
+    assert len(frame.scan) == 150
+    assert frame.scan.ranges_m[0] == pytest.approx(1.0)
+    assert frame.scan.intensities[0] == 200
 
 
 def test_truncated_csv_scan_is_dropped():
@@ -25,10 +28,26 @@ def test_truncated_csv_scan_is_dropped():
 def test_teleplot_xy_corrects_library_mirror():
     # la lib écrit y = -d·sin(angle) : un point « maths » à 90° (gauche), 1 m, arrive en x=0, y=-1000
     pairs = ";".join(["0:-1000"] * MIN_POINTS)
-    (ev,) = LineParser().feed(f">lidar:{pairs};|xy")
-    assert ev.kind == "scan"
-    assert ev.payload.angles_deg[0] == pytest.approx(90.0)
-    assert ev.payload.ranges_m[0] == pytest.approx(1.0)
+    line = f">lidar:{pairs};|xy"
+    (ev,) = LineParser().feed(line)
+    frame = ev.payload
+    assert frame.fmt == FORMAT_TELEPLOT and frame.raw == (line,)
+    assert frame.scan.angles_deg[0] == pytest.approx(90.0)
+    assert frame.scan.ranges_m[0] == pytest.approx(1.0)
+    assert np.isnan(frame.scan.intensities).all()           # intensité inconnue, pas inventée
+
+
+def test_teleplot_no_echo_points_get_interpolated_angle():
+    # 120 points de 10° à 129° (sens maths), dont un sans écho (0:0) au milieu
+    pts = []
+    for k in range(120):
+        a = np.radians(10 + k)
+        pts.append("0:0" if k == 50 else f"{1000 * np.cos(a):.1f}:{-1000 * np.sin(a):.1f}")
+    (ev,) = LineParser().feed(">lidar:" + ";".join(pts) + "|xy")
+    s = ev.payload.scan
+    assert s.ranges_m[50] == 0
+    assert s.angles_deg[50] == pytest.approx(60.0, abs=0.01)
+    assert len(s.filtered()) == 119
 
 
 def test_teleplot_scalar_is_telemetry():

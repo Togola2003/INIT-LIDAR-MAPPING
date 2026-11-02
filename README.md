@@ -27,6 +27,18 @@ pip install pytest
 | Sans robot | `python -m lidar.simulate --out data/simu` |
 | Tests | `python -m pytest` |
 
+## LidarScope en bref
+
+| Onglet | Rôle |
+|---|---|
+| Direct | scan en direct, distances autour du robot, pose, capture (moyenne sur N tours) |
+| Captures | une couleur par scan, inclure / exclure (👁), recalage fin ↑↓←→⟲⟳, statistiques |
+| Cartographie | les étapes du cours : ① prétraitement, ② grid map (résolution, état initial, modèle, p(occupé), nettoyage, cellules traversées / d'impact), ③ carte vectorielle (segmentation, split, fusion) ; carte de toutes les captures ou d'une seule |
+| Données | import (JSON, CSV du TP, RobotControl, MapTool, LD06, carte de référence MapTool .txt) et **Exporter…** : chaque scan et/ou l'ensemble, contenu au choix, avec un `LISEZMOI.md` |
+
+Avec le programme Arduino du prof (`printScanTeleplot`), seuls x et y arrivent : l'intensité est notée
+« inconnue ». Pour des données complètes, remplacer la ligne par `ld06.printScanCSV(Serial);`.
+
 ## Format d'échange `*.lidar.json`
 
 LidarScope exporte une session au format JSON **auto-décrit** : le fichier contient lui-même la

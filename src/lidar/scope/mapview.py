@@ -13,7 +13,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from ..geometry import Pose
-from ..gridmap import OccupancyGrid
 from ..scan import Scan
 from ..segments import Segment
 from . import theme as T
@@ -40,7 +39,7 @@ class MapView:
         self.live_segs: list = []
         (self.robot_line,) = self.ax.plot([], [], "-", color=T.ROBOT, lw=2.5, zorder=6)
         (self.robot_dot,) = self.ax.plot([], [], "o", color=T.ROBOT, ms=8, zorder=6)
-        self.capture_arts: dict[int, object] = {}
+        self.capture_arts: dict[int, list] = {}
         self.analysis_arts: list = []
         (self.ruler_line,) = self.ax.plot([], [], "--o", color=T.WARN, lw=1.5, ms=5, zorder=7)
         self.ruler_text = self.ax.text(0, 0, "", color=T.WARN, fontsize=10, zorder=8,
@@ -85,27 +84,42 @@ class MapView:
         self.robot_line.set_data([pose.x, pose.x + 0.3 * np.cos(pose.theta)],
                                  [pose.y, pose.y + 0.3 * np.sin(pose.theta)])
 
-    def draw_capture(self, number: int, scan: Scan | None, color: str = "") -> None:
-        old = self.capture_arts.pop(number, None)
-        if old is not None:
-            old.remove()
-        if scan is not None and len(scan):
+    def draw_capture(self, number: int, scan: Scan | None, color: str = "", show_points: bool = True,
+                     show_pose: bool = True) -> None:
+        """Points d'une capture (repère carte) + petit triangle à la pose du robot."""
+        for art in self.capture_arts.pop(number, []):
+            art.remove()
+        arts = []
+        if scan is not None and len(scan) and show_points:
             pts = scan.global_points()
-            self.capture_arts[number] = self.ax.scatter(pts[:, 0], pts[:, 1], s=7, c=color, zorder=3, linewidths=0)
+            arts.append(self.ax.scatter(pts[:, 0], pts[:, 1], s=7, c=color, zorder=3, linewidths=0))
+        if scan is not None and show_pose:
+            p = scan.pose
+            arts += self.ax.plot(p.x, p.y, "^", color=color, ms=10, mec="#000", zorder=6)
+            arts += self.ax.plot([p.x, p.x + 0.25 * np.cos(p.theta)], [p.y, p.y + 0.25 * np.sin(p.theta)],
+                                 "-", color=color, lw=2, zorder=6)
+        self.capture_arts[number] = arts
         self.redraw()
 
-    def draw_analysis(self, grid: OccupancyGrid | None, segments: list[Segment]) -> None:
+    def draw_analysis(self, image: np.ndarray | None, extent, segments: list[Segment],
+                      reference: list[Segment], beams: tuple | None) -> None:
+        """Grid map (image), segments extraits, carte de référence, cellules d'un scan (pédagogie)."""
         for art in self.analysis_arts:
             art.remove()
         self.analysis_arts = []
-        if grid is not None:
+        if image is not None:
             self.analysis_arts.append(self.ax.imshow(
-                1 - grid.probability(), cmap="gray", vmin=0, vmax=1, origin="lower",
-                extent=grid.extent(), alpha=0.5, zorder=1, interpolation="nearest"))
+                image, cmap="gray", vmin=0, vmax=1, origin="lower", extent=extent,
+                alpha=0.6, zorder=1, interpolation="nearest"))
+        if beams is not None:   # (image RGBA des cellules traversées / d'impact, étendue)
+            rgba, beam_extent = beams
+            self.analysis_arts.append(self.ax.imshow(rgba, origin="lower", extent=beam_extent, zorder=2,
+                                                     interpolation="nearest"))
+        for sg in reference:
+            self.analysis_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "--", color="#a371f7", lw=1.6, zorder=2)
         for sg in segments:
-            (ln,) = self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color="#ffffff", lw=2.4, zorder=5,
-                                 solid_capstyle="round")
-            self.analysis_arts.append(ln)
+            self.analysis_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color="#ffffff", lw=2.4,
+                                               zorder=5, solid_capstyle="round")
         self.redraw()
 
     def frame(self, center: Pose, half_size: float) -> None:
