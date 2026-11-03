@@ -1,0 +1,468 @@
+{
+ "protocole": {
+  "niveaux_initialisation": [
+   [
+    0.1,
+    5.0
+   ],
+   [
+    0.25,
+    10.0
+   ],
+   [
+    0.5,
+    20.0
+   ],
+   [
+    1.0,
+    30.0
+   ]
+  ],
+  "tirages_par_niveau": 6,
+  "seuil_reussite": [
+   0.05,
+   2.0
+  ],
+  "bruit_simulation_m": 0.01,
+  "filtres": {
+   "min_range_m": 0.15,
+   "max_range_m": 12.0,
+   "min_intensity": 0,
+   "min_neighbors": 2,
+   "neighbor_radius_m": 0.1
+  },
+  "scans": [
+   "J2 scan 01 (03/11, printScanCSV, ex « points #1 »)",
+   "J2 scan 02 (03/11, printScanCSV, ex « points #3 »)",
+   "J2 scan 03 (03/11, printScanCSV, ex « points #5 »)",
+   "J2 scan 04 (03/11, printScanCSV, ex « points #6 »)",
+   "J2 scan 05 (03/11, printScanCSV, ex « points #7 »)",
+   "J2 scan 06 (03/11, printScanCSV, ex « points #9 »)",
+   "J2 scan 07 (03/11, printScanCSV, ex « points #10 »)",
+   "J2 scan 08 (03/11, printScanCSV, ex « points #11 »)",
+   "J2 scan 09 (03/11, printScanCSV, ex « points #13 »)",
+   "J2 scan 10 (02/11, Teleplot, ex « points #14 »)",
+   "J2 scan 11 (02/11, Teleplot, ex « points_salle #1 »)",
+   "J2 scan 12 (02/11, Teleplot, ex « points_salle #2 »)",
+   "J2 scan 13 (02/11, Teleplot, ex « points_salle #3 »)"
+  ],
+  "incertitude_references_reelles": {
+   "par_scan_cm": [
+    5.5,
+    21.8,
+    4.0,
+    2.4,
+    4.6,
+    1.4,
+    2.5,
+    1.7,
+    1.4,
+    2.2,
+    2.5,
+    1.8,
+    1.3
+   ],
+   "mediane_cm": 2.4,
+   "min_cm": 1.3,
+   "max_cm": 21.8
+  }
+ },
+ "resultats": {
+  "simulation": {
+   "grid · exhaustive": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     0.987,
+     1.0
+    ],
+    "reussite_totale": 0.997,
+    "erreur_mediane_cm_si_reussi": 1.87,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 80.7,
+    "temps_max_ms": 120.0
+   },
+   "grid · multi-résolution": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "reussite_totale": 1.0,
+    "erreur_mediane_cm_si_reussi": 1.88,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 5.5,
+    "temps_max_ms": 15.0
+   },
+   "grid · gradient": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     0.397,
+     0.0
+    ],
+    "reussite_totale": 0.599,
+    "erreur_mediane_cm_si_reussi": 0.36,
+    "erreur_mediane_deg_si_reussi": 0.042,
+    "temps_median_ms": 2.6,
+    "temps_max_ms": 5.9
+   },
+   "grid · multi-résolution + gradient": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "reussite_totale": 1.0,
+    "erreur_mediane_cm_si_reussi": 0.29,
+    "erreur_mediane_deg_si_reussi": 0.042,
+    "temps_median_ms": 6.4,
+    "temps_max_ms": 11.0
+   },
+   "vecteur · Gauss-Newton": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     0.538,
+     0.013
+    ],
+    "reussite_totale": 0.638,
+    "erreur_mediane_cm_si_reussi": 0.19,
+    "erreur_mediane_deg_si_reussi": 0.039,
+    "temps_median_ms": 7.3,
+    "temps_max_ms": 19.9
+   },
+   "vecteur · calcul direct": {
+    "reussite_par_niveau": [
+     1.0,
+     0.744,
+     0.051,
+     0.0
+    ],
+    "reussite_totale": 0.449,
+    "erreur_mediane_cm_si_reussi": 0.79,
+    "erreur_mediane_deg_si_reussi": 0.351,
+    "temps_median_ms": 18.1,
+    "temps_max_ms": 21.8
+   },
+   "vecteur · multi-résolution + Gauss-Newton": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "reussite_totale": 1.0,
+    "erreur_mediane_cm_si_reussi": 0.19,
+    "erreur_mediane_deg_si_reussi": 0.039,
+    "temps_median_ms": 9.8,
+    "temps_max_ms": 12.3
+   },
+   "scans · ICP point à point": {
+    "reussite_par_niveau": [
+     0.962,
+     0.936,
+     0.308,
+     0.013
+    ],
+    "reussite_totale": 0.554,
+    "erreur_mediane_cm_si_reussi": 0.43,
+    "erreur_mediane_deg_si_reussi": 0.118,
+    "temps_median_ms": 8.2,
+    "temps_max_ms": 11.9
+   },
+   "scans · ICP point à droite": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     0.795,
+     0.141
+    ],
+    "reussite_totale": 0.734,
+    "erreur_mediane_cm_si_reussi": 0.14,
+    "erreur_mediane_deg_si_reussi": 0.019,
+    "temps_median_ms": 2.9,
+    "temps_max_ms": 7.7
+   },
+   "scans · multi-résolution + ICP": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "reussite_totale": 1.0,
+    "erreur_mediane_cm_si_reussi": 0.4,
+    "erreur_mediane_deg_si_reussi": 0.09,
+    "temps_median_ms": 10.3,
+    "temps_max_ms": 18.2
+   }
+  },
+  "réel, zone couverte": {
+   "grid · exhaustive": {
+    "reussite_par_niveau": [
+     0.983,
+     1.0,
+     0.967,
+     0.95
+    ],
+    "reussite_totale": 0.975,
+    "erreur_mediane_cm_si_reussi": 2.08,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 85.8,
+    "temps_max_ms": 114.5
+   },
+   "grid · multi-résolution": {
+    "reussite_par_niveau": [
+     0.983,
+     1.0,
+     0.983,
+     0.95
+    ],
+    "reussite_totale": 0.979,
+    "erreur_mediane_cm_si_reussi": 2.06,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 5.7,
+    "temps_max_ms": 9.6
+   },
+   "grid · gradient": {
+    "reussite_par_niveau": [
+     1.0,
+     0.883,
+     0.117,
+     0.0
+    ],
+    "reussite_totale": 0.5,
+    "erreur_mediane_cm_si_reussi": 0.82,
+    "erreur_mediane_deg_si_reussi": 0.086,
+    "temps_median_ms": 3.3,
+    "temps_max_ms": 7.2
+   },
+   "grid · multi-résolution + gradient": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     0.95
+    ],
+    "reussite_totale": 0.988,
+    "erreur_mediane_cm_si_reussi": 0.78,
+    "erreur_mediane_deg_si_reussi": 0.086,
+    "temps_median_ms": 8.4,
+    "temps_max_ms": 11.9
+   },
+   "vecteur · Gauss-Newton": {
+    "reussite_par_niveau": [
+     1.0,
+     0.967,
+     0.317,
+     0.033
+    ],
+    "reussite_totale": 0.579,
+    "erreur_mediane_cm_si_reussi": 1.62,
+    "erreur_mediane_deg_si_reussi": 0.213,
+    "temps_median_ms": 21.5,
+    "temps_max_ms": 85.6
+   },
+   "vecteur · calcul direct": {
+    "reussite_par_niveau": [
+     0.933,
+     0.333,
+     0.033,
+     0.0
+    ],
+    "reussite_totale": 0.325,
+    "erreur_mediane_cm_si_reussi": 2.8,
+    "erreur_mediane_deg_si_reussi": 0.718,
+    "temps_median_ms": 27.0,
+    "temps_max_ms": 86.7
+   },
+   "vecteur · multi-résolution + Gauss-Newton": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     1.0,
+     0.983
+    ],
+    "reussite_totale": 0.996,
+    "erreur_mediane_cm_si_reussi": 1.38,
+    "erreur_mediane_deg_si_reussi": 0.213,
+    "temps_median_ms": 20.5,
+    "temps_max_ms": 49.7
+   },
+   "scans · ICP point à point": {
+    "reussite_par_niveau": [
+     0.983,
+     0.817,
+     0.2,
+     0.0
+    ],
+    "reussite_totale": 0.5,
+    "erreur_mediane_cm_si_reussi": 0.86,
+    "erreur_mediane_deg_si_reussi": 0.169,
+    "temps_median_ms": 9.4,
+    "temps_max_ms": 24.7
+   },
+   "scans · ICP point à droite": {
+    "reussite_par_niveau": [
+     1.0,
+     1.0,
+     0.533,
+     0.1
+    ],
+    "reussite_totale": 0.658,
+    "erreur_mediane_cm_si_reussi": 0.81,
+    "erreur_mediane_deg_si_reussi": 0.061,
+    "temps_median_ms": 4.8,
+    "temps_max_ms": 14.9
+   },
+   "scans · multi-résolution + ICP": {
+    "reussite_par_niveau": [
+     0.917,
+     0.933,
+     0.917,
+     0.967
+    ],
+    "reussite_totale": 0.933,
+    "erreur_mediane_cm_si_reussi": 0.97,
+    "erreur_mediane_deg_si_reussi": 0.153,
+    "temps_median_ms": 12.6,
+    "temps_max_ms": 20.7
+   }
+  },
+  "réel, tous les scans": {
+   "grid · exhaustive": {
+    "reussite_par_niveau": [
+     0.795,
+     0.821,
+     0.769,
+     0.782
+    ],
+    "reussite_totale": 0.792,
+    "erreur_mediane_cm_si_reussi": 2.22,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 89.0,
+    "temps_max_ms": 145.1
+   },
+   "grid · multi-résolution": {
+    "reussite_par_niveau": [
+     0.769,
+     0.782,
+     0.756,
+     0.744
+    ],
+    "reussite_totale": 0.763,
+    "erreur_mediane_cm_si_reussi": 2.11,
+    "erreur_mediane_deg_si_reussi": 0.0,
+    "temps_median_ms": 5.7,
+    "temps_max_ms": 9.6
+   },
+   "grid · gradient": {
+    "reussite_par_niveau": [
+     0.923,
+     0.731,
+     0.103,
+     0.0
+    ],
+    "reussite_totale": 0.439,
+    "erreur_mediane_cm_si_reussi": 0.87,
+    "erreur_mediane_deg_si_reussi": 0.088,
+    "temps_median_ms": 3.4,
+    "temps_max_ms": 8.0
+   },
+   "grid · multi-résolution + gradient": {
+    "reussite_par_niveau": [
+     0.808,
+     0.782,
+     0.769,
+     0.744
+    ],
+    "reussite_totale": 0.776,
+    "erreur_mediane_cm_si_reussi": 0.87,
+    "erreur_mediane_deg_si_reussi": 0.086,
+    "temps_median_ms": 8.5,
+    "temps_max_ms": 16.7
+   },
+   "vecteur · Gauss-Newton": {
+    "reussite_par_niveau": [
+     0.872,
+     0.821,
+     0.256,
+     0.026
+    ],
+    "reussite_totale": 0.494,
+    "erreur_mediane_cm_si_reussi": 1.62,
+    "erreur_mediane_deg_si_reussi": 0.213,
+    "temps_median_ms": 22.4,
+    "temps_max_ms": 85.6
+   },
+   "vecteur · calcul direct": {
+    "reussite_par_niveau": [
+     0.833,
+     0.295,
+     0.026,
+     0.0
+    ],
+    "reussite_totale": 0.288,
+    "erreur_mediane_cm_si_reussi": 2.74,
+    "erreur_mediane_deg_si_reussi": 0.69,
+    "temps_median_ms": 27.7,
+    "temps_max_ms": 86.7
+   },
+   "vecteur · multi-résolution + Gauss-Newton": {
+    "reussite_par_niveau": [
+     0.769,
+     0.769,
+     0.769,
+     0.756
+    ],
+    "reussite_totale": 0.766,
+    "erreur_mediane_cm_si_reussi": 1.38,
+    "erreur_mediane_deg_si_reussi": 0.213,
+    "temps_median_ms": 21.6,
+    "temps_max_ms": 75.5
+   },
+   "scans · ICP point à point": {
+    "reussite_par_niveau": [
+     0.833,
+     0.731,
+     0.179,
+     0.0
+    ],
+    "reussite_totale": 0.436,
+    "erreur_mediane_cm_si_reussi": 0.97,
+    "erreur_mediane_deg_si_reussi": 0.139,
+    "temps_median_ms": 10.3,
+    "temps_max_ms": 24.7
+   },
+   "scans · ICP point à droite": {
+    "reussite_par_niveau": [
+     1.0,
+     0.962,
+     0.462,
+     0.077
+    ],
+    "reussite_totale": 0.625,
+    "erreur_mediane_cm_si_reussi": 0.93,
+    "erreur_mediane_deg_si_reussi": 0.143,
+    "temps_median_ms": 5.0,
+    "temps_max_ms": 14.9
+   },
+   "scans · multi-résolution + ICP": {
+    "reussite_par_niveau": [
+     0.705,
+     0.718,
+     0.705,
+     0.756
+    ],
+    "reussite_totale": 0.721,
+    "erreur_mediane_cm_si_reussi": 0.97,
+    "erreur_mediane_deg_si_reussi": 0.153,
+    "temps_median_ms": 12.8,
+    "temps_max_ms": 33.4
+   }
+  }
+ }
+}
