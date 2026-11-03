@@ -6,9 +6,11 @@ import customtkinter as ctk
 
 from ...geometry import Pose
 from ...scope.collector import COMBINE_MODES, Collection, finish
+from ...robot import DEFAULT_HOST
 from ...scope.sources import FORMAT_TELEPLOT
 from .. import project as P
 from .. import style as S
+from ..components import PilotPad
 from ..tools import PoseTool
 from .base import Step
 
@@ -32,7 +34,7 @@ class CollectStep(Step):
 
     # ------------------------------------------------------------------ panneau
     def build(self, panel) -> None:
-        card = S.Card(panel, "Robot", "Relie l'ESP32 par câble USB, ou essaie la démo sans robot.")
+        card = S.Card(panel, "Robot", "Câble USB, Wi-Fi (réseau « RobotESP32 », firmware RobotControl), ou démo.")
         card.pack(fill="x", pady=(0, 10))
         b = card.body
         self.source = S.segmented(b, SOURCES, SOURCES[0], lambda v: self._source_changed())
@@ -47,11 +49,21 @@ class CollectStep(Step):
         self.baud = ctk.CTkOptionMenu(row, values=BAUDS, width=100, height=30, font=S.font(12), fg_color=S.SURFACE_2,
                                       button_color=S.BORDER, button_hover_color=S.FAINT, text_color=S.INK)
         self.baud.pack(side="left")
+        self.wifi_row = ctk.CTkFrame(b, fg_color="transparent")
+        ctk.CTkLabel(self.wifi_row, text="Adresse", font=S.font(12), text_color=S.MUTED).pack(side="left")
+        self.host = ctk.StringVar(value=DEFAULT_HOST)
+        ctk.CTkEntry(self.wifi_row, textvariable=self.host, width=160, height=30, font=S.font(12, mono=True),
+                     fg_color=S.SURFACE_2, border_color=S.BORDER, text_color=S.INK, corner_radius=8).pack(side="left", padx=8)
+        self.port_row = row
         self.connect_btn = S.button(b, "Connecter", self.toggle_connect, "primary")
         self.connect_btn.pack(fill="x", pady=(10, 2))
         self.source_hint = S.hint(b, "")
         self.live_info = S.KeyValues(b)
         self.live_info.pack(fill="x", pady=(4, 0))
+
+        self.pilot_card = S.Card(panel, "Piloter le robot (Wi-Fi)", "Chaque appui = un mouvement de la durée choisie.")
+        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status)
+        self.pad.pack(fill="x")
 
         card = S.Card(panel, "Capture", "C = récolter · C de nouveau = arrêter · Entrée = garder · Échap = jeter")
         card.pack(fill="x", pady=(0, 10))
@@ -77,11 +89,15 @@ class CollectStep(Step):
         S.button(row, "Refaire", self.redo, width=80).pack(side="left", padx=3)
         S.button(row, "Jeter", self.drop, "danger", width=70).pack(side="left", padx=3)
 
-        card = S.Card(panel, "Pose du robot", "Clique sur la carte pour le placer, glisse pour l'orienter.")
+        card = S.Card(panel, "Pose du robot", "Là où le scan sera posé sur la carte. Mesurée au mètre, ou placée à la "
+                                             "souris : clic = position, glisser = orientation.")
         card.pack(fill="x", pady=(0, 10))
         self.pose_field = S.PoseField(card.body)
         self.pose_field.pack(anchor="w")
-        S.button(card.body, "Appliquer", self.apply_pose_field, "ghost", width=90).pack(anchor="e", pady=(6, 0))
+        row = ctk.CTkFrame(card.body, fg_color="transparent")
+        row.pack(fill="x", pady=(6, 0))
+        S.button(row, "Placer sur la carte", self.place_on_map, width=150).pack(side="left")
+        S.button(row, "Appliquer", self.apply_pose_field, "ghost", width=90).pack(side="right")
 
         card = S.Card(panel, "Importer", "Session .lidar.json, CSV du TP, RobotControl, MapTool…")
         card.pack(fill="x", pady=(0, 10))
@@ -92,16 +108,18 @@ class CollectStep(Step):
     # ------------------------------------------------------------------ connexion
     def _source_changed(self) -> None:
         src = self.source.get()
+        self.source_hint.configure(text={
+            "Wi-Fi": "Connecte d'abord le PC au Wi-Fi « RobotESP32 » (mot de passe 12345678), puis Connecter.",
+            "Démo": "Démo : une salle simulée, sans robot.",
+            "Câble USB": "Ferme le moniteur série d'Arduino avant de connecter."}[src], text_color=S.MUTED)
         if src == "Wi-Fi":
-            self.source_hint.configure(text="Pilotage et scans par Wi-Fi (RobotControl) : prévu au Jour 3.",
-                                       text_color=S.WARN)
-            self.connect_btn.configure(state="disabled")
+            self.port_row.pack_forget()
+            self.wifi_row.pack(fill="x", before=self.connect_btn)
+            self.pilot_card.pack(fill="x", pady=(0, 10), after=self.connect_btn.master.master)
         else:
-            self.source_hint.configure(text="Démo : une salle simulée, sans robot." if src == "Démo" else
-                                       "Ferme le moniteur série d'Arduino avant de connecter.", text_color=S.MUTED)
-            self.connect_btn.configure(state="normal")
-        for w in (self.port, self.baud):
-            w.configure(state="normal" if src == "Câble USB" else "disabled")
+            self.wifi_row.pack_forget()
+            self.port_row.pack(fill="x", before=self.connect_btn)
+            self.pilot_card.pack_forget()
 
     def refresh_ports(self) -> None:
         ports = self.app.ports() or ["—"]
@@ -116,6 +134,8 @@ class CollectStep(Step):
             return
         if self.source.get() == "Démo":
             self.app.demo()
+        elif self.source.get() == "Wi-Fi":
+            self.app.connect_wifi(self.host.get().strip() or DEFAULT_HOST)
         elif self.port.get() == "—":
             self.app.status("Aucun port série : branche l'ESP32 puis ↻.")
             return
@@ -124,8 +144,14 @@ class CollectStep(Step):
         self.connect_btn.configure(text="Déconnecter")
 
     # ------------------------------------------------------------------ pose
-    def enter(self) -> None:
-        self.app.set_tool(PoseTool(self.app.map, self.set_robot, S.ROBOT))
+    def place_on_map(self) -> None:
+        """Un seul placement : le clic suivant pose le robot, puis la souris redevient normale."""
+        self.app.set_tool(PoseTool(self.app.map, self._placed, S.ROBOT))
+        self.app.status("Clique sur la carte à la position du robot, glisse pour son orientation.")
+
+    def _placed(self, pose: Pose) -> None:
+        self.app.set_tool(None)
+        self.set_robot(pose)
 
     def set_robot(self, pose: Pose) -> None:
         self.robot = pose
@@ -199,6 +225,8 @@ class CollectStep(Step):
 
     def on_key(self, key: str) -> None:
         k = key.lower()
+        if self.source.get() == "Wi-Fi" and self.pad.key(key):
+            return
         if k == "c":
             self.capture()
         elif k == "return":

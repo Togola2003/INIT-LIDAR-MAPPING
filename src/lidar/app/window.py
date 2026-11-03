@@ -22,6 +22,7 @@ from ..mapedit import apply_to_grid, apply_to_segments
 from ..scope.mapping import MapParams, build_maps
 from ..scope.mapview import Editor, MapView
 from ..scope.processing import Filters
+from ..robot import WifiSource
 from ..scope.sources import DemoSource, MapDemoSource, SerialSource, list_ports
 from . import project as P
 from . import style as S
@@ -478,6 +479,15 @@ class LidarLab:
     def connect(self, port: str, baud: int) -> None:
         self.disconnect()
         self._start(SerialSource(port, baud, self.events), f"Port {port}")
+
+    def connect_wifi(self, host: str) -> None:
+        self.disconnect()
+        self._start(WifiSource(self.events, host), f"Wi-Fi {host}")
+
+    @property
+    def robot(self):
+        """Client de pilotage (robot en Wi-Fi), ou None."""
+        return getattr(self.source, "client", None)
 
     def demo(self) -> None:
         self.disconnect()

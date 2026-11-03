@@ -58,3 +58,51 @@ class ScanList(ctk.CTkScrollableFrame):
             for w in (row, dot, box, t1, t2):
                 w.bind("<Button-1>", lambda e, n=c.number: self.on_select(n, False))
                 w.bind("<Control-Button-1>", lambda e, n=c.number: self.on_select(n, True))
+
+
+class PilotPad(ctk.CTkFrame):
+    """Pilotage du robot en Wi-Fi : croix de déplacement, rotations, arrêt, durée d'un mouvement.
+    Clavier (quand le pavé est affiché) : I/K avancer/reculer, J/L gauche/droite, U/O tourner, Espace stop."""
+
+    KEYS = {"i": "forward", "k": "backward", "j": "left", "l": "right", "u": "rotateleft", "o": "rotateright"}
+
+    def __init__(self, master, get_client: Callable[[], object], on_status: Callable[[str], None]) -> None:
+        super().__init__(master, fg_color="transparent")
+        self.get_client, self.on_status = get_client, on_status
+        pad = ctk.CTkFrame(self, fg_color="transparent")
+        pad.pack()
+        layout = ((0, 0, "⟲", "rotateleft"), (0, 1, "↑", "forward"), (0, 2, "⟳", "rotateright"),
+                  (1, 0, "←", "left"), (1, 2, "→", "right"), (2, 1, "↓", "backward"))
+        for r, c, txt, action in layout:
+            S.button(pad, txt, lambda a=action: self.move(a), width=50, height=42, font=S.font(18)).grid(
+                row=r, column=c, padx=3, pady=3)
+        S.button(pad, "■", self.stop, "danger", width=50, height=42, font=S.font(16)).grid(row=1, column=1, padx=3, pady=3)
+        self.duration = S.Slider(self, "Durée d'un mouvement", 100, 2000, 400, "{:.0f} ms", lambda v: None, steps=19)
+        self.duration.pack(fill="x", pady=(8, 0))
+        S.hint(self, "Clavier : I K (avancer, reculer) · J L (côtés) · U O (tourner) · Espace = stop")
+
+    def move(self, action: str) -> None:
+        client = self.get_client()
+        if client is None:
+            self.on_status("Pilotage impossible : le robot n'est pas connecté en Wi-Fi (étape 1).")
+            return
+        if not client.move(action, int(self.duration.get())):
+            self.on_status("Le robot exécute encore la commande précédente.")
+        elif client.last_error:
+            self.on_status(f"Commande non reçue : {client.last_error}")
+
+    def stop(self) -> None:
+        client = self.get_client()
+        if client is not None:
+            client.stop()
+            self.on_status("Arrêt demandé.")
+
+    def key(self, keysym: str) -> bool:
+        k = keysym.lower()
+        if k == "space":
+            self.stop()
+            return True
+        if k in self.KEYS:
+            self.move(self.KEYS[k])
+            return True
+        return False
