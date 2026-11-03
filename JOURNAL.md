@@ -1,7 +1,8 @@
 # Journal de bord du projet
 
-Traçabilité demandée par l'énoncé : ce qui a été fait, quand, et dans quel commit.
-Liste complète des commits : `git log --oneline` ; versions de fin d'étape : `git tag`.
+Traçabilité demandée par l'énoncé : ce qui a été fait, quand, dans quel commit, et ce qui n'a pas marché du
+premier coup. Liste complète des commits : `git log --oneline`. Versions de fin de journée : `git tag`
+(`jour1`, `jour2`).
 
 ## Jour 1 : lundi 02/11/2026
 
@@ -14,27 +15,56 @@ Liste complète des commits : `git log --oneline` ; versions de fin d'étape : `
 | 17:07 | LidarScope v3 : onglet Cartographie selon le cours, export au choix (chaque scan / ensemble), fidélité Teleplot | `108eaf3` |
 | après-midi | **Acquisition en salle** : 16 scans réels avec LidarScope (export du 02/11 à 21:02) | données ajoutées le 03/11 |
 
-## Jour 1 (suite) : mardi 03/11/2026
+## Jour 1 (fin) : mardi 03/11/2026, matin
 
 | Heure | Étape | Commit |
 |---|---|---|
 | 07:07 | Scans réels ajoutés (`data/salle/`), recalage **ICP**, filtre de voisinage, étapes intermédiaires de la carte vectorielle | `afff321` |
 | 07:12 | **LidarStudio** : cartographie hors ligne en 6 étapes du cours | `75ad0ec` |
-| matin | Compte rendu du Jour 1 avec les figures des scans réels, dossier `TP/`, ce journal, tag `jour1` | voir `git log` |
+| matin | Compte rendu du Jour 1 avec les figures des scans réels, dossier `TP/`, ce journal, tag `jour1` | `2ca54fe` |
+| 10:47 | Outils plus rapides : arbre k-d (ICP 13,7 s → 0,17 s), **recalage global** de toutes les poses (6,4 → 2,2 cm) | `045ec34` |
+| 10:47 | Scans déplacés et tournés à la souris (plusieurs à la fois, Ctrl+Z), capture par récolte de N tours avec aperçu | `09732c4` |
+| 10:47 | Dépôt organisé en deux parties : outils / réalisation du TP | `efd841c` |
 
-| après-midi | **Outils plus simples et plus rapides** : déplacer / tourner les scans à la souris (plusieurs à la fois, Ctrl+Z), capture par récolte de N tours avec aperçu, arbre k-d (ICP 80× plus rapide), **recalage global** de toutes les poses (6,4 → 2,2 cm), dépôt organisé en deux parties (outils / réalisation du TP) | voir `git log` |
+## Jour 2 : mardi 03/11/2026, localisation
 
-## Jour 2 : mardi 03/11/2026 (suite)
+**Démarche suivie (celle du prof) :** une méthode d'abord, on regarde ses limites, puis on améliore, avec un commit
+par étape.
 
 | Heure | Étape | Commit |
 |---|---|---|
-| 10:00 → 13:45 | Nouvelle acquisition en salle (`printScanCSV`, avec intensité) et recalage à la main dans les applis : export de 13:45 retenu (écart entre scans 5,2 → 3,0 cm par rapport à l'export de 12:41) | données ajoutées ensuite |
+| 10:00 → 13:45 | Nouvelle acquisition en salle (`printScanCSV`, avec intensité), recalage à la main ; export de 13:45 retenu (écart entre scans 5,2 → 3,0 cm) | — |
 | 14:10 | Nettoyage (doublons `aa/`, sorties régénérables), jeu de données `data/salle_jour2/`, plan du Jour 2 | `f68ace9` |
-| après-midi | **Localisation, étape 1 :** grid map, champ de vraisemblance. Gradient seul (précis mais coincé quand on part de loin), puis recherche exhaustive et multi-résolution (robustes), puis la combinaison | voir `git log` |
-| après-midi | **Étape 2 :** carte vectorielle (Gauss-Newton, calcul direct). **Étape 3 :** entre scans (ICP point à point, point à droite) | voir `git log` |
-| après-midi | **Étape 4 :** banc d'essai commun (6 240 localisations), critère de zone couverte, compte rendu du Jour 2 | `9f24a06` → `beeac38` |
-| soir (3) | Localiser refaite selon le TP : clic sur un scan de la liste = localisation globale immédiate, fichier importé, robot en direct ; **robot en Wi-Fi** (scans + pilotage, protocole RobotControl) ; plus de clic piège sur la carte | voir `git log` |
-| soir (2) | Retours de test : **localisation globale** sans pose de départ (idée reprise de l'appli ld06-slam d'un camarade), **suivi en temps réel** + démo qui roule dans la carte, **carte de référence validée**, retouches appliquées aux deux cartes, outils dans la barre de la carte | voir `git log` |
-| soir | **LidarLab**, l'application unique : récolter, nettoyer (gomme), recaler, cartes (retouches des murs), **localiser** (référence + méthode au choix), exporter. Style clair, Nouveau projet, Ctrl+Z | voir `git log` |
+| 15:13 | **Étape 1, grid map :** champ de vraisemblance. Gradient seul (précis mais coincé quand on part loin), puis exhaustive et multi-résolution (robustes), puis la combinaison | `9f24a06` |
+| 15:14 | **Étape 2, carte vectorielle :** distance point → segment, Gauss-Newton et calcul direct | `f503a05` |
+| 15:14 | **Étape 3, entre scans :** ICP point à point et point à droite | `e90f6d9` |
+| 15:14 | **Étape 4, banc d'essai :** 6 240 localisations, mêmes scans et mêmes départs, simulation + réel, critère de zone couverte | `6239762` |
+| 15:14 → 15:55 | Compte rendu du Jour 2, puis précision : localisation faite hors ligne sur les scans enregistrés | `51d94de`, `beeac38` |
+| 16:07 → 16:17 | **LidarLab**, l'application unique en 6 étapes (récolter, nettoyer, recaler, cartes, localiser, exporter) | `b30a1a4` → `6d80563` |
+| 17:33 | Retouches des murs appliquées aux **deux** cartes ; carte de référence validée et figée | `e39c228` |
+| 17:34 | **Localisation globale** sans pose de départ (idée de l'appli ld06-slam d'un camarade, réécrite en Python) | `c20aafb` |
+| 17:35 | **Suivi en temps réel** + robot de démo qui roule dans la carte | `20c2a58` |
+| 17:41 | Outils toujours visibles au-dessus de la carte ; étape Localiser refaite | `287f548` → `99abc50` |
+| 18:52 → 18:56 | **Robot en Wi-Fi** (protocole RobotControl : `/scan` binaire, `/forward?time=…`) : lecture et pilotage | `b0a74b1` → `911e26b` |
+| 19:49 | Localiser **comme demandé** : la carte reste fixe, un scan libre est glissé / tourné, puis « Localiser » le ramène dessus ; recherche globale plus sûre | `e4f27e7` → `1caf243` |
+| soir | Tag `jour2` | — |
 
-## Jour 3 : à venir
+### Problèmes rencontrés et solutions (Jour 2)
+
+| Problème | Cause | Solution | Commit |
+|---|---|---|---|
+| Le gradient seul échoue dès 50 cm / 20° d'erreur de départ (0 % à 1 m) | il suit la pente depuis le départ et s'arrête sur un **minimum local** (un autre mur) | multi-résolution d'abord, gradient ensuite : 99 % | `9f24a06` |
+| Les scans réels 1, 2 et 5 ne se localisent pas (≈ 77 % de réussite au total) | ils voient surtout des **meubles proches** ; sans eux, leur coin de salle n'est pas dans la carte | critère explicite de **zone couverte** (≥ 35 % des points près d'un mur), résultats donnés pour les deux cas | `6239762` |
+| Dans l'appli, « Localiser » laissait un scan vert « à côté » de la carte | la pose de départ se déplaçait **à chaque clic sur la carte** ; départ à 5-10 m, alors que les méthodes cherchent à ± 1 m | localisation **globale** sans pose de départ, plus de clic piège sur la carte | `c20aafb`, `f6a822a` |
+| Un mur tracé à la main n'existait que dans la carte vectorielle | les retouches remplaçaient la liste de segments | une retouche = une **opération** rejouée sur la grid map **et** les murs | `e39c228` |
+| Un scan importé posé à l'envers mais annoncé « fiable » | la recherche globale ne testait que les orientations tirées des murs | si moins de 60 % des points sont sur les murs, on teste **toutes** les orientations | `e4f27e7` |
+| L'utilisateur ne comprenait pas l'enchaînement de l'étape Localiser | l'interaction ne correspondait pas à son idée : carte fixe + scan libre qu'on déplace puis qui revient | étape refaite : scan libre orange → ◎ Localiser → animation, vert brillant | `e6ca97d` |
+
+### Reste à faire, et à tester en salle
+
+- **Robot réel en Wi-Fi :** testé seulement contre un faux robot qui répond comme l'ESP32. À essayer le 04/11.
+- **Méthode probabiliste** (filtre de particules) : non faite (facultative).
+
+## Jour 3 : mercredi 04/11/2026, à venir
+
+Plan : [TP/Jour3/README.md](TP/Jour3/README.md).

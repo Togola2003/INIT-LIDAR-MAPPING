@@ -6,8 +6,8 @@ le produire (applications, bibliothèque, tests, leçons) sont décrits dans [..
 | Jour | Sujet | Compte rendu | État |
 |---|---|---|---|
 | 1 | Extraction, visualisation, grid map, segments, carte vectorielle | [Jour1/COMPTE_RENDU.md](Jour1/COMPTE_RENDU.md) | ✅ tous les attendus traités |
-| 2 | Localisation (scan matching) sur grid map, carte vectorielle, entre scans | [Jour2/COMPTE_RENDU.md](Jour2/COMPTE_RENDU.md) | ✅ 10 méthodes comparées hors ligne (scans enregistrés) |
-| 3 | SLAM + carte complète de la salle | [Jour3/README.md](Jour3/README.md) | ⬜ |
+| 2 | Localisation (scan matching) sur grid map, carte vectorielle, entre scans | [Jour2/COMPTE_RENDU.md](Jour2/COMPTE_RENDU.md) | ✅ 10 méthodes comparées, localisation globale et en direct |
+| 3 | SLAM + carte complète de la salle | [Jour3/README.md](Jour3/README.md) | ⬜ préparé : test du robot Wi-Fi, plan du SLAM |
 | — | Conclusion personnelle (livrable) | [CONCLUSION.md](CONCLUSION.md) | ✍️ à rédiger par moi |
 
 La traçabilité complète (ce qui a été fait, quand, dans quel commit) est dans [../JOURNAL.md](../JOURNAL.md).

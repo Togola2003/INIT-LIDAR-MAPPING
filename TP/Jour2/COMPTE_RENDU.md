@@ -37,10 +37,10 @@ fait **en simulation**, où la vraie pose est exacte.
 Elles sont appliquées aux trois références : grid map, carte vectorielle, scan voisin. La méthode probabiliste
 (filtre de particules) n'a pas été faite.
 
-**Avec le robot en temps réel (prévu dans l'application finale).** Le calcul sera exactement le même :
-1. le robot est posé dans la salle, et l'application reçoit son scan (par câble série, ou plus tard par Wi-Fi) ;
-2. l'utilisateur indique une position approximative, ou bien elle est déduite des commandes de déplacement ;
-3. l'étape *Localiser* de l'application aligne ce scan sur la carte et affiche la position trouvée.
+**Avec le robot en temps réel (fait dans LidarLab, voir § 7).** Le calcul est le même :
+1. l'application reçoit chaque tour du lidar (Wi-Fi, câble série ou démo) ;
+2. au premier tour, elle cherche dans toute la carte ; ensuite, elle part de la pose du tour précédent ;
+3. la position trouvée est affichée en continu, avec le trajet du robot.
 
 Le robot (ESP32, code Arduino) ne calcule rien : il envoie ses points, et tout le calcul est fait en Python sur
 le PC.

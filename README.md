@@ -30,12 +30,12 @@ Le dépôt contient **deux choses différentes** qui servent le même objectif :
 
 | Grande ligne de l'énoncé | État | Preuve |
 |---|---|---|
-| Afficher les données du lidar en nuages de points | ✅ | LidarScope, LidarStudio, [Fig. 1](TP/Jour1/figures/fig1_nuages_poses_manuelles.png) |
+| Afficher les données du lidar en nuages de points | ✅ | LidarLab, [Fig. 1](TP/Jour1/figures/fig1_nuages_poses_manuelles.png) |
 | Construire une carte d'occupation (grid map) | ✅ | [Fig. 4-5](TP/Jour1/figures/fig5_gridmap_mise_a_jour.png), `src/lidar/gridmap.py` |
 | Nuages de points → segments → carte vectorielle | ✅ | [Fig. 6-7](TP/Jour1/figures/fig7_carte_vectorielle.png), `segments.py`, `vectormap.py` |
-| Localisation sur grid map / carte vectorielle / scan de référence | ✅ | 10 méthodes comparées **hors ligne sur les scans enregistrés** : 99 % de réussite ([Jour 2](TP/Jour2/COMPTE_RENDU.md)) ; en direct avec le robot : prévu dans l'appli finale |
-| Cartographier la salle et y localiser le robot | 🟡 | carte complète de 16 scans réels, recalée à 2,2 cm près |
-| Utiliser git | ✅ | commits réguliers, [JOURNAL.md](JOURNAL.md), tags par jour |
+| Localisation sur grid map / carte vectorielle / scan de référence | ✅ | 10 méthodes comparées sur les scans enregistrés (99 % de réussite), localisation globale et en direct dans LidarLab ([Jour 2](TP/Jour2/COMPTE_RENDU.md)) |
+| Cartographier la salle et y localiser le robot | 🟡 | cartes recalées à 2-3 cm, localisation en direct prête ; robot Wi-Fi et SLAM au [Jour 3](TP/Jour3/README.md) |
+| Utiliser git | ✅ | un commit par étape, [JOURNAL.md](JOURNAL.md) (avec les problèmes rencontrés), tags `jour1` et `jour2` |
 
 ## Démarrer
 

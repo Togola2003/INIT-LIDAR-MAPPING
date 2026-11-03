@@ -2,10 +2,9 @@
 
 **Compte rendu : [COMPTE_RENDU.md](COMPTE_RENDU.md).** Ce fichier garde le plan de départ.
 
-> **Important :** la localisation a été faite **hors ligne, en Python**, sur les scans déjà enregistrés (ceux de la carte).
-> On cache la pose d'un scan, on le relocalise sur la carte des autres et on compare. Le robot n'a pas été redéplacé
-> en temps réel. La même localisation, avec le robot en direct, est prévue dans l'étape *Localiser* de l'application
-> finale (voir plus bas).
+> **Important :** l'évaluation chiffrée a été faite **hors ligne, en Python**, sur les scans déjà enregistrés : on
+> cache la pose d'un scan, on le relocalise sur la carte des autres et on compare. La localisation en direct (robot
+> en Wi-Fi ou démo) est disponible dans LidarLab ; elle reste à tester sur le vrai robot.
 
 **Question à résoudre :** un scan et une pose approximative étant donnés, retrouver la vraie pose (x, y, θ) du robot
 en alignant le scan sur une **référence**, puis comparer les méthodes avec des chiffres.
@@ -44,16 +43,13 @@ en alignant le scan sur une **référence**, puis comparer les méthodes avec de
 4. Mesures : erreur de position, erreur d'angle, temps, réussite (seuils ci-dessus), courbe « taux de réussite
    en fonction de l'erreur initiale ».
 
-## Plus tard (Jour 3), préparé mais pas développé maintenant
+## Ce qui a été ajouté ensuite (03/11 au soir)
 
-- **Application finale unique (LidarLab, faite le 03/11 au soir, `LidarLab.bat`)**, en 6 étapes : récolter → nettoyer → recaler → cartes (avec retouches à la main) →
-  **localiser** → exporter. Elle aura un bouton « Nouveau projet » qui vide tout, et une interface soignée (claire,
-  aérée, lisible) pour montrer et faire comprendre chaque étape du cours. L'étape *Localiser* appellera
-  `src/lidar/localization/` sur un scan reçu du robot en direct.
-
-- **Pilotage Wi-Fi :** le firmware RobotControl (`/forward?time=…`, `/rotateleft`, `/scan` binaire, `/pose`)
-  sera piloté par un client Python (`src/lidar/robot/`), puis par un onglet *Pilotage* dans LidarScope, avec une
-  source `WifiSource` à côté de `SerialSource`.
-- **Odométrie :** le robot n'a **pas de codeurs de roues**. L'odométrie sera donc estimée à partir des commandes
-  (vitesse étalonnée × durée), puis corrigée à chaque scan par la localisation du Jour 2 (prédiction, puis correction).
-  C'est la base du SLAM du Jour 3.
+- **LidarLab** (`LidarLab.bat`), l'application unique en 6 étapes. À l'étape *Localiser*, la carte validée reste fixe :
+  un scan de la liste ou importé est déplacé, puis « Localiser » le ramène dessus. Le robot en direct est suivi en
+  temps réel.
+- **Localisation globale** (sans pose de départ) et **suivi en temps réel** : section 7 du compte rendu.
+- **Robot en Wi-Fi** (`src/lidar/robot.py`) : lecture de `/scan` et pilotage, comme RobotControl. Il reste à le tester
+  sur le vrai robot (procédure dans [../Jour3/README.md](../Jour3/README.md)).
+- **Odométrie :** le robot n'a pas de codeurs de roues. La pose précédente sert de prédiction et le lidar corrige à
+  chaque tour. C'est la base du SLAM du Jour 3.
