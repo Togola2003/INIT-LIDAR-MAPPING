@@ -26,6 +26,13 @@ En ligne de commande, depuis le dossier du projet :
 
 ## LidarLab : l'application unique
 
+**Barre d'outils au-dessus de la carte, toujours visible :**
+- **⌫ Gomme :** glisser un rectangle efface les points de tous les scans visibles ;
+- **✎ Tracer un mur**, **↔ Prolonger** (attraper une extrémité) et **✕ Effacer un mur.**
+
+Chaque retouche est une opération rejouée sur **les deux cartes** : un mur tracé devient des cases occupées de la grid
+map, et un mur effacé des cases libres. Il compte donc aussi pour l'export et la localisation. Échap arrête l'outil.
+
 Une fenêtre, trois zones :
 - **à gauche,** les 6 étapes et la liste des scans du projet (clic = sélectionner, Ctrl + clic = plusieurs,
   ◉ = afficher ou masquer) ;
@@ -35,10 +42,10 @@ Une fenêtre, trois zones :
 | Étape | Ce qu'on y fait |
 |---|---|
 | 1 Récolter | câble USB ou démo (Wi-Fi : Jour 3). Clic sur la carte = pose du robot. **C** récolte N tours, puis aperçu : garder (Entrée), refaire ou jeter (Échap). Import de fichiers |
-| 2 Nettoyer | filtres du cours (portée, intensité, points isolés). **Gomme** : glisser un rectangle efface les points. Suppr = supprimer les scans sélectionnés |
+| 2 Nettoyer | filtres du cours (portée, intensité, points isolés). Suppr = supprimer les scans sélectionnés |
 | 3 Recaler | glisser = déplacer, clic droit glissé = tourner, flèches / A E, plusieurs scans en bloc. **Recalage complet**, ICP en bloc, cohérence |
-| 4 Cartes | grid map et carte vectorielle avec tous les réglages du cours. **Retouches** : tracer, prolonger ou supprimer un mur (les extrémités s'aimantent) |
-| 5 Localiser | choisir la **référence** (grid map, carte vectorielle, scan voisin), la **méthode**, le scan (du projet, ou en direct) et la pose de départ (clic + glisser) → pose trouvée, erreur, temps. Comparer les 10 méthodes |
+| 4 Cartes | grid map et carte vectorielle, **retouches comprises**. **✓ Valider cette carte comme référence** : elle est figée et sert à la localisation |
+| 5 Localiser | **Un scan du projet** : sans pose de départ, recherche dans toute la carte (globale), puis affinage ; ou pose approximative (clic). **Le robot en direct** : suivi en temps réel du robot (ou de la démo qui roule dans ta carte). Avancé : référence, méthode, comparaison, contrôle sans le scan |
 | 6 Exporter | projet `.lidar.json` (retouches comprises), dossier complet, image PNG, carte vectorielle `.txt` |
 
 - **Toujours disponibles :**

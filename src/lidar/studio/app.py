@@ -22,7 +22,6 @@ import numpy as np
 from ..extraction import ExtractionParams, extraction_stages
 from ..geometry import Pose, move_rigid
 from ..matching import align_best, align_sequence, consistency, icp, refine_global, voxel_downsample
-from ..scan import Scan
 from ..segments import Segment
 from ..vectormap import load_vector_map
 from ..scope import theme as T

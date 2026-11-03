@@ -32,7 +32,7 @@ from .export_dialog import ExportDialog
 from .exporter import ExportOptions, export_bundle
 from .mapping import beam_image, build_maps
 from .mapview import Editor, MapView
-from .processing import average_scans, scan_stats
+from .processing import scan_stats
 from .session import Capture, now_utc, read_any, save_session
 from .sources import FORMAT_TELEPLOT, DemoSource, Frame, SerialSource, list_ports
 from .widgets import LabeledSlider, PoseEntry, StatCard, button, font, section
