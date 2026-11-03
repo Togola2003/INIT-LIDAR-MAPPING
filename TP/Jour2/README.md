@@ -46,7 +46,7 @@ en alignant le scan sur une **référence**, puis comparer les méthodes avec de
 
 ## Plus tard (Jour 3), préparé mais pas développé maintenant
 
-- **Application finale unique**, en 6 étapes : récolter → nettoyer → recaler → cartes (avec retouches à la main) →
+- **Application finale unique (LidarLab, faite le 03/11 au soir, `LidarLab.bat`)**, en 6 étapes : récolter → nettoyer → recaler → cartes (avec retouches à la main) →
   **localiser** → exporter. Elle aura un bouton « Nouveau projet » qui vide tout, et une interface soignée (claire,
   aérée, lisible) pour montrer et faire comprendre chaque étape du cours. L'étape *Localiser* appellera
   `src/lidar/localization/` sur un scan reçu du robot en direct.

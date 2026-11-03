@@ -14,7 +14,7 @@ Le dépôt contient **deux choses différentes** qui servent le même objectif :
 |---|---|---|
 | **C'est quoi** | Le logiciel que j'ai construit **avant et pendant** le TP : applications, bibliothèque Python, tests, leçons | **Mon travail de TP** : mes mesures en salle, mes résultats, mes comptes rendus jour par jour |
 | **À quoi ça sert** | Se préparer, comprendre le capteur, vérifier les algorithmes sur des données à vérité connue, puis traiter les vraies données | Répondre aux attendus de l'énoncé, avec des chiffres et des figures reproductibles |
-| **Où** | `src/lidar/`, `LidarScope.bat`, `LidarStudio.bat`, `tests/`, `lecons/`, `firmware/`, `data/simu/` | `TP/`, `data/salle/`, `JOURNAL.md` |
+| **Où** | `src/lidar/`, `LidarLab.bat` (appli unique), `tests/`, `lecons/`, `firmware/`, `data/simu/` | `TP/`, `data/salle/`, `JOURNAL.md` |
 | **Point d'entrée** | [docs/OUTILS.md](docs/OUTILS.md) | [TP/README.md](TP/README.md) |
 
 **Comment les deux parties s'enchaînent :**
@@ -47,7 +47,8 @@ pip install pytest
 python -m pytest
 ```
 
-Puis double-clic sur **`LidarScope.bat`** (robot branché) ou **`LidarStudio.bat`** (traitement des scans de la salle).
+Puis double-clic sur **`LidarLab.bat`** : l'application unique, en 6 étapes (récolter, nettoyer, recaler, cartes,
+localiser, exporter). `LidarScope.bat` et `LidarStudio.bat` sont les premières versions du Jour 1.
 Le mode d'emploi des deux applications est dans [docs/OUTILS.md](docs/OUTILS.md).
 
 ## Organisation
@@ -56,7 +57,9 @@ Le mode d'emploi des deux applications est dans [docs/OUTILS.md](docs/OUTILS.md)
 ── Partie A : outils ──────────────────────────────────────────────────────────
 src/lidar/          bibliothèque : geometry, scan, gridmap, segments, extraction, vectormap,
                     matching (ICP + recalage global), simulate, ...
-src/lidar/scope/    LidarScope (acquisition en direct) + briques communes (carte, session, export)
+src/lidar/app/      LidarLab, l'application unique (projet, style, outils de carte, une étape par fichier)
+src/lidar/localization/  localisation du Jour 2 (10 méthodes)
+src/lidar/scope/    LidarScope (Jour 1) + briques communes (carte, session, export)
 src/lidar/studio/   LidarStudio (cartographie pas à pas)
 tests/              tests pytest (dont les cas limites de la découpe de segments)
 lecons/             initiation au LD06 : une leçon = un script

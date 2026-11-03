@@ -6,19 +6,56 @@ simulés (`data/simu/`).
 
 | Outil | Rôle | Lancer |
 |---|---|---|
+| **LidarLab** (application unique) | tout le TP dans une seule fenêtre : récolter, nettoyer, recaler, cartes (avec retouches), localiser, exporter | `LidarLab.bat` |
 | **LidarScope** | relier le robot, voir le scan en direct, récolter des captures propres, les placer | `LidarScope.bat` |
 | **LidarStudio** | traiter les captures selon les 6 étapes du cours et produire les cartes | `LidarStudio.bat` |
 | Bibliothèque `src/lidar/` | les algorithmes, utilisables sans interface | `python -m lidar.gridmap …` |
 | Leçons `lecons/` | comprendre le LD06 octet par octet avant de s'en servir | `python lecons/01_trame.py` |
 
+LidarScope et LidarStudio sont les premières versions (Jour 1). LidarLab les réunit et les remplace pour la suite.
+
 En ligne de commande, depuis le dossier du projet :
 
 ```powershell
+.venv\Scripts\python.exe -m lidar.app
 .venv\Scripts\python.exe -m lidar.scope
 .venv\Scripts\python.exe -m lidar.studio "data\salle\session_salle_2026-11-02.lidar.json"
 ```
 
 ---
+
+## LidarLab : l'application unique
+
+Une fenêtre, trois zones :
+- **à gauche,** les 6 étapes et la liste des scans du projet (clic = sélectionner, Ctrl + clic = plusieurs,
+  ◉ = afficher ou masquer) ;
+- **au centre,** la carte ;
+- **à droite,** les réglages de l'étape, avec en tête « Ce que dit le cours ».
+
+| Étape | Ce qu'on y fait |
+|---|---|
+| 1 Récolter | câble USB ou démo (Wi-Fi : Jour 3). Clic sur la carte = pose du robot. **C** récolte N tours, puis aperçu : garder (Entrée), refaire ou jeter (Échap). Import de fichiers |
+| 2 Nettoyer | filtres du cours (portée, intensité, points isolés). **Gomme** : glisser un rectangle efface les points. Suppr = supprimer les scans sélectionnés |
+| 3 Recaler | glisser = déplacer, clic droit glissé = tourner, flèches / A E, plusieurs scans en bloc. **Recalage complet**, ICP en bloc, cohérence |
+| 4 Cartes | grid map et carte vectorielle avec tous les réglages du cours. **Retouches** : tracer, prolonger ou supprimer un mur (les extrémités s'aimantent) |
+| 5 Localiser | choisir la **référence** (grid map, carte vectorielle, scan voisin), la **méthode**, le scan (du projet, ou en direct) et la pose de départ (clic + glisser) → pose trouvée, erreur, temps. Comparer les 10 méthodes |
+| 6 Exporter | projet `.lidar.json` (retouches comprises), dossier complet, image PNG, carte vectorielle `.txt` |
+
+- **Toujours disponibles :**
+  - **Nouveau projet** vide tout ;
+  - **Ouvrir** ajoute des scans ;
+  - **Ctrl+Z / Ctrl+Y** annule ou rétablit chaque action (80 niveaux) ;
+  - **Ctrl+S** enregistre.
+- **Un jeu de données ouvert n'est jamais écrasé :** le premier « Enregistrer » demande toujours où écrire.
+
+**Architecture** (pour faire évoluer l'appli) :
+- `app/project.py` : le projet, immuable et testé, sans interface ;
+- `app/style.py` : le thème ;
+- `app/tools.py` : les outils de la carte ;
+- `app/steps/` : une étape par fichier ;
+- `app/window.py` : la fenêtre, la sélection, la connexion et les caches.
+
+Changer d'interface, par exemple pour une version web, ne touche ni au projet ni aux algorithmes.
 
 ## LidarScope : acquisition
 
