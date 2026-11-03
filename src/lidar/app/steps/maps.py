@@ -1,4 +1,9 @@
-"""Étape 4 · Cartes : grid map et carte vectorielle selon le cours, plus retouches à la main des murs."""
+"""Étape 4 · Cartes : grid map et carte vectorielle selon le cours, retouches à la main, validation.
+
+Les retouches (barre d'outils au-dessus de la carte : tracer, prolonger, effacer un mur) sont des
+opérations rejouées sur les DEUX cartes. « Valider » fige le résultat comme carte de référence :
+c'est sur elle que l'étape Localiser travaille.
+"""
 
 from __future__ import annotations
 
@@ -7,27 +12,34 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+from ...refmap import build_reference
 from ...scope.mapping import GridParams, MapParams, VectorParams
 from ...vectormap import load_vector_map
 from .. import project as P
 from .. import style as S
-from ..tools import WallTool
 from .base import Step
 
 RESOLUTIONS = {"2 cm": 0.02, "5 cm": 0.05, "10 cm": 0.10}
-SHOW = ["Les deux", "Grid map", "Vectorielle"]
-EDIT = ["Aucune", "Tracer", "Prolonger", "Supprimer"]
+SHOW = ["Les deux", "Grid map", "Murs"]
 
 
 class MapsStep(Step):
     title = "Cartes"
-    subtitle = "grid map, segments"
-    headline = "Fond : blanc = libre, noir = occupé, gris = inconnu. En rouge : les murs de la carte vectorielle."
+    subtitle = "grid map, murs, validation"
+    headline = "Blanc = libre, noir = occupé, gris = inconnu, rouge = murs. Retouches : barre d'outils ci-dessus."
     course = ("Grid map : chaque case porte une probabilité d'occupation (log-odds). Un faisceau rend libres les "
               "cases qu'il traverse et occupée la case d'impact. Carte vectorielle : nuage → clusters → découpe "
-              "(split) → droites ajustées → fusion, puis association avec la carte et détection d'absence.")
+              "(split) → droites ajustées → fusion. Une fois la carte bonne, on la valide : c'est la référence "
+              "sur laquelle le robot se localise.")
 
     def build(self, panel) -> None:
+        card = S.Card(panel, "Carte de référence", "Quand la carte te convient, valide-la : la localisation "
+                                                  "se fera sur elle (retouches comprises).")
+        card.pack(fill="x", pady=(0, 10))
+        S.button(card.body, "✓  Valider cette carte comme référence", self.validate, "primary", height=42,
+                 font=S.font(14, "bold")).pack(fill="x")
+        self.ref_info = S.hint(card.body, "")
+
         card = S.Card(panel, "Affichage")
         card.pack(fill="x", pady=(0, 10))
         b = card.body
@@ -35,14 +47,24 @@ class MapsStep(Step):
         self.show.pack(fill="x", pady=(0, 8))
         self.points = S.toggle(b, "Points des scans", self._changed)
         self.poses = S.toggle(b, "Poses du robot", self._changed, on=True)
-        self.ref = S.toggle(b, "Carte de référence (violet)", self._changed, on=True)
+        self.ref = S.toggle(b, "Carte importée (violet)", self._changed, on=True)
         for w in (self.points, self.poses, self.ref):
             w.pack(anchor="w", pady=2)
-        S.button(b, "Importer une carte de référence (.txt)…", self.import_reference, "ghost").pack(fill="x", pady=(6, 0))
 
-        card = S.Card(panel, "Grid map")
+        card = S.Card(panel, "Retouches à la main", "Outils au-dessus de la carte : ✎ Tracer, ↔ Prolonger, "
+                                                    "✕ Effacer. Chaque retouche modifie la grid map ET les murs.")
         card.pack(fill="x", pady=(0, 10))
-        b = card.body
+        self.edit_info = S.hint(card.body, "")
+        S.button(card.body, "Annuler toutes les retouches", self.forget_edits, "ghost").pack(fill="x")
+
+        card = S.Card(panel, "Bilan")
+        card.pack(fill="x", pady=(0, 10))
+        self.stats = S.KeyValues(card.body)
+        self.stats.pack(fill="x")
+
+        adv = S.Collapsible(panel, "Réglages de la grid map")
+        adv.pack(fill="x", pady=(0, 10))
+        b = adv.body
         for label, attr, values, val in (("Résolution", "res", list(RESOLUTIONS), "5 cm"),
                                          ("État initial", "init", ["inconnu", "libre", "occupé"], "inconnu"),
                                          ("Modèle", "model", ["probabiliste", "binaire"], "probabiliste")):
@@ -57,28 +79,16 @@ class MapsStep(Step):
         self.iso = S.toggle(b, "Supprimer les cases occupées isolées", self._changed)
         self.iso.pack(anchor="w", pady=(4, 0))
 
-        card = S.Card(panel, "Carte vectorielle")
-        card.pack(fill="x", pady=(0, 10))
-        b = card.body
+        adv = S.Collapsible(panel, "Réglages de la carte vectorielle")
+        adv.pack(fill="x", pady=(0, 10))
+        b = adv.body
         self.jump = S.Slider(b, "Saut entre deux objets", 0.02, 0.40, 0.08, "{:.2f} m", self._changed)
         self.split = S.Slider(b, "Tolérance point-droite", 0.01, 0.12, 0.04, "{:.2f} m", self._changed)
         self.min_len = S.Slider(b, "Longueur minimale", 0.05, 1.0, 0.30, "{:.2f} m", self._changed)
         self.angle = S.Slider(b, "Fusion si angle ≤", 2, 25, 10, "{:.0f}°", self._changed)
         for s in (self.jump, self.split, self.min_len, self.angle):
             s.pack(fill="x")
-
-        card = S.Card(panel, "Retouches des murs", "Tracer : glisser d'un point à un autre. Prolonger : attraper "
-                                                   "une extrémité. Les extrémités proches s'aimantent.")
-        card.pack(fill="x", pady=(0, 10))
-        self.edit = S.segmented(card.body, EDIT, EDIT[0], lambda v: self._edit_mode())
-        self.edit.pack(fill="x", pady=(0, 8))
-        self.edit_info = S.hint(card.body, "")
-        S.button(card.body, "Repartir de la carte calculée", self.forget_edits, "ghost").pack(fill="x")
-
-        card = S.Card(panel, "Bilan")
-        card.pack(fill="x", pady=(0, 10))
-        self.stats = S.KeyValues(card.body)
-        self.stats.pack(fill="x")
+        S.button(b, "Importer une carte à comparer (.txt MapTool)…", self.import_reference, "ghost").pack(fill="x", pady=(6, 0))
 
     # ------------------------------------------------------------------ réglages
     def params(self, grid: bool = True, vector: bool = True) -> MapParams:
@@ -93,35 +103,38 @@ class MapsStep(Step):
         self.app.render(150)
 
     def import_reference(self) -> None:
-        path = filedialog.askopenfilename(title="Carte de référence", filetypes=[("Carte vectorielle", "*.txt")])
+        path = filedialog.askopenfilename(title="Carte à comparer", filetypes=[("Carte vectorielle", "*.txt")])
         if path:
             segs = load_vector_map(path).segments
-            self.app.apply(replace(self.project, reference=tuple(segs)), f"Carte de référence : {len(segs)} segment(s).")
-
-    # ------------------------------------------------------------------ retouches
-    def segments(self) -> list:
-        if self.project.manual_segments is not None:
-            return list(self.project.manual_segments)
-        return list(self.app.maps(params=self.params(grid=False)).segments) if self.project.visible else []
-
-    def _set_segments(self, segs) -> None:
-        self.app.apply(P.set_manual_segments(self.project, segs))
-
-    def _edit_mode(self) -> None:
-        mode = self.edit.get().lower()
-        if mode == "aucune":
-            self.app.set_tool(None)
-        else:
-            self.app.set_tool(WallTool(self.app.map, mode, self.segments, self._set_segments))
-            self.app.status({"tracer": "Glisse d'un point à un autre pour ajouter un mur.",
-                             "prolonger": "Attrape une extrémité de mur et déplace-la.",
-                             "supprimer": "Clique sur un mur pour le supprimer."}[mode])
+            self.app.apply(replace(self.project, reference=tuple(segs)), f"Carte importée : {len(segs)} segment(s).")
 
     def forget_edits(self) -> None:
-        self.app.apply(P.set_manual_segments(self.project, None), "Carte vectorielle recalculée (retouches oubliées).")
+        if self.project.wall_edits:
+            self.app.apply(P.clear_edits(self.project), "Retouches annulées (Ctrl+Z pour les retrouver).")
+
+    # ------------------------------------------------------------------ validation
+    def validate(self) -> None:
+        caps = self.project.visible
+        if not caps:
+            self.app.status("Rien à valider : aucun scan visible.")
+            return
+        p = self.params()
+        ref = build_reference([self.app.filtered(c) for c in caps], [c.title for c in caps], self.project.wall_edits,
+                              p.grid.resolution_m, p.vector.to_vectormap(),
+                              name=f"{self.project.name} ({len(caps)} scans)")
+        self.app.apply(P.set_reference_map(self.project, ref),
+                       f"Carte validée comme référence : {ref.describe()}. Elle sert maintenant à la localisation.")
+
+    def on_project(self) -> None:
+        ref = self.project.reference_map
+        self.ref_info.configure(text=f"Référence actuelle : {ref.describe()}" if ref else
+                                "Aucune carte validée pour l'instant.", text_color=S.SUCCESS if ref else S.MUTED)
+        n = len(self.project.wall_edits)
+        self.edit_info.configure(text=f"{n} retouche(s) appliquée(s) aux deux cartes." if n else "Aucune retouche.",
+                                 text_color=S.ACCENT if n else S.MUTED)
 
     def enter(self) -> None:
-        self._edit_mode()
+        self.on_project()
 
     # ------------------------------------------------------------------ carte
     def render(self) -> None:
@@ -131,27 +144,22 @@ class MapsStep(Step):
             self.clear_map()
             app.map.draw_overlay([], [], [])
             return
-        want_grid, want_vec = show != "Vectorielle", show != "Grid map"
-        params = self.params(grid=want_grid, vector=want_vec and self.project.manual_segments is None)
-        res = app.maps(params=params)
+        want_grid, want_vec = show != "Murs", show != "Grid map"
+        params = self.params(grid=want_grid, vector=want_vec)
+        res = app.final_maps(params)
         img = res.grid_image(params.grid.model) if want_grid else None
-        segs = (list(self.project.manual_segments) if self.project.manual_segments is not None else res.segments) \
-            if want_vec else []
+        segs = res.segments if want_vec else []
         ref = list(self.project.reference) if self.ref.get() else []
         app.map.draw_analysis(img, res.grid.extent() if img is not None else None, segs, ref, None)
         pts, poses = app.scan_layers(caps, big=False)
         app.map.draw_overlay(pts if self.points.get() else [], [], poses if self.poses.get() else [])
-        manual = self.project.manual_segments is not None
-        self.edit_info.configure(text=f"Carte retouchée à la main : {len(self.project.manual_segments)} murs."
-                                 if manual else "Carte calculée automatiquement (pas de retouche).",
-                                 text_color=S.ACCENT if manual else S.MUTED)
         rows = [("Scans", str(len(caps)))]
         g = res.stats.get("grid")
-        if g:
-            rows += [("Grille", g["cells"]), ("Cases occupées", str(g["occupied"])),
-                     ("Surface vue", f"{g['explored_area_m2']} m²")]
+        if g and res.grid is not None:
+            t = res.grid.occupied_mask().sum()
+            rows += [("Grille", g["cells"]), ("Cases occupées", str(int(t))), ("Surface vue", f"{g['explored_area_m2']} m²")]
         if want_vec:
-            rows += [("Murs (segments)", str(len(segs))),
-                     ("Longueur totale", f"{sum(s.length for s in segs):.1f} m")]
+            rows += [("Murs (segments)", str(len(segs))), ("Longueur totale", f"{sum(s.length for s in segs):.1f} m")]
+        rows.append(("Retouches", str(len(self.project.wall_edits))))
         self.stats.show(rows)
-        self.legend("blanc = libre · noir = occupé · gris = inconnu · rouge = murs · violet = référence")
+        self.legend("blanc = libre · noir = occupé · gris = inconnu · rouge = murs · violet = carte importée")

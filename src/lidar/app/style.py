@@ -167,3 +167,27 @@ class KeyValues(ctk.CTkFrame):
             a.grid(row=r, column=0, sticky="w", pady=1)
             b.grid(row=r, column=1, sticky="e", pady=1)
             self._labels += [a, b]
+
+
+class Collapsible(ctk.CTkFrame):
+    """Carte repliable : le titre est un bouton ▸ / ▾. Pour ranger les réglages avancés."""
+
+    def __init__(self, master, title: str, subtitle: str = "", opened: bool = False) -> None:
+        super().__init__(master, fg_color=SURFACE, corner_radius=RADIUS, border_width=1, border_color=BORDER)
+        self.title = title
+        self.head = ctk.CTkButton(self, text="", command=self.toggle, anchor="w", fg_color="transparent",
+                                  hover_color=SURFACE_2, text_color=INK, font=font(14, "bold"), height=40,
+                                  corner_radius=RADIUS)
+        self.head.pack(fill="x", padx=4, pady=4)
+        self.sub = subtitle
+        self.body = ctk.CTkFrame(self, fg_color="transparent")
+        self.opened = not opened
+        self.toggle()
+
+    def toggle(self) -> None:
+        self.opened = not self.opened
+        self.head.configure(text=f"{'▾' if self.opened else '▸'}  {self.title}")
+        if self.opened:
+            self.body.pack(fill="x", padx=16, pady=(0, 14))
+        else:
+            self.body.pack_forget()

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
+from ...refmap import to_dict
 from ...scope.exporter import ITEMS, SCOPES, ExportOptions, export_bundle
 from ...scope.render import render_png
 from .. import style as S
@@ -54,8 +56,6 @@ class ExportStep(Step):
         self.summary = S.KeyValues(card.body)
         self.summary.pack(fill="x")
 
-    def _segments(self, res):
-        return list(self.project.manual_segments) if self.project.manual_segments is not None else res.segments
 
     def save_as(self) -> None:
         self.app.store.apply(replace(self.project, path=None), remember=False)
@@ -76,8 +76,11 @@ class ExportStep(Step):
         except (ValueError, OSError) as exc:
             messagebox.showerror("Export", str(exc))
             return
-        if self.project.manual_segments is not None:
-            self._write_segments(Path(root) / "carte_vectorielle_retouchee.txt", list(self.project.manual_segments))
+        if self.project.wall_edits:
+            self._write_segments(Path(root) / "carte_vectorielle_retouchee.txt", self.app.final_segments())
+        if self.project.reference_map is not None:
+            (Path(root) / "carte_reference.json").write_text(
+                json.dumps(to_dict(self.project.reference_map), ensure_ascii=False), encoding="utf-8")
         self.app.status(f"Export terminé : {root}")
 
     def export_png(self) -> None:
@@ -88,8 +91,7 @@ class ExportStep(Step):
                                             filetypes=[("Image PNG", "*.png")])
         if path:
             params = self.app.map_params()
-            res = self.app.maps(params=params)
-            res = replace(res, segments=self._segments(res))
+            res = self.app.final_maps(params)
             render_png(path, caps, res, params.grid.model, f"{self.project.name} · {len(caps)} scans",
                        list(self.project.reference), show_points=False)
             self.app.status(f"Image enregistrée : {path}")
@@ -100,7 +102,7 @@ class ExportStep(Step):
         path = filedialog.asksaveasfilename(defaultextension=".txt", initialfile="carte_vectorielle.txt",
                                             filetypes=[("Carte vectorielle", "*.txt")])
         if path:
-            self._write_segments(Path(path), self._segments(self.app.maps()))
+            self._write_segments(Path(path), self.app.final_segments())
             self.app.status(f"Carte vectorielle enregistrée : {path}")
 
     @staticmethod
@@ -118,8 +120,8 @@ class ExportStep(Step):
             self.summary.show([("Scans", "0")])
             return
         params = app.map_params()
-        res = app.maps(params=params)
-        segs = self._segments(res)
+        res = app.final_maps(params)
+        segs = res.segments
         app.map.draw_analysis(res.grid_image(params.grid.model), res.grid.extent() if res.grid else None, segs,
                               list(self.project.reference), None)
         _, poses = app.scan_layers(caps, big=False)
@@ -127,6 +129,7 @@ class ExportStep(Step):
         g = res.stats.get("grid", {})
         self.summary.show([("Projet", self.project.name), ("Scans visibles", f"{len(caps)} / {len(self.project.captures)}"),
                            ("Grid map", f"{g.get('cells', '—')} · {g.get('explored_area_m2', '—')} m²"),
-                           ("Murs", f"{len(segs)}{' (retouchés)' if self.project.manual_segments is not None else ''}"),
+                           ("Murs", f"{len(segs)} ({len(self.project.wall_edits)} retouche(s))"),
+                           ("Carte de référence", "validée" if self.project.reference_map else "non validée"),
                            ("Enregistré", "non" if app.store.dirty else "oui")])
         self.legend("carte finale : grid map + murs (rouge) + poses du robot")

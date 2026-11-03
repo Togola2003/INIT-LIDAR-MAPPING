@@ -53,15 +53,22 @@ def test_store_undo_redo_and_reset():
     assert seen == [2, 1, 2, 1, 0]
 
 
-def test_manual_segments_and_save_roundtrip(tmp_path):
+def test_edits_reference_and_save_roundtrip(tmp_path):
+    from lidar.mapedit import ADD, WallEdit
+    from lidar.refmap import build_reference
     proj, _ = _project(2)
-    proj = P.set_manual_segments(proj, [Segment(0, 0, 1, 0)])
+    proj = P.add_edits(proj, [WallEdit(ADD, Segment(0, 0, 1, 0))])
+    proj = P.set_reference_map(proj, build_reference([c.scan.filtered() for c in proj.captures], ["a", "b"],
+                                                     proj.wall_edits))
     saved = P.save(proj, str(tmp_path / "essai.lidar.json"))
     assert saved.name == "essai" and saved.path
     reopened, nums, errors = P.open_files(P.Project(), [saved.path])
     assert nums == [1, 2] and not errors
     assert np.allclose(reopened.find(2).scan.ranges_m, proj.find(2).scan.ranges_m, atol=1e-4)   # format : 0,1 mm
-    assert reopened.manual_segments == (Segment(0, 0, 1, 0),)
+    assert reopened.wall_edits == proj.wall_edits
+    ref, back = proj.reference_map, reopened.reference_map
+    assert back.grid.shape == ref.grid.shape and len(back.segments) == len(ref.segments)
+    assert (back.grid.occupied_mask() == ref.grid.occupied_mask()).all()
 
 
 def test_open_files_reports_errors(tmp_path):

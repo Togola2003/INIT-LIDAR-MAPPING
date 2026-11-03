@@ -14,6 +14,7 @@ import numpy as np
 from matplotlib.patches import Rectangle
 
 from ..geometry import Pose
+from ..mapedit import ADD, DELETE, WallEdit
 from ..segments import Segment
 from . import style as S
 
@@ -110,11 +111,12 @@ def _point_segment_distance(p: np.ndarray, s: Segment) -> float:
 
 
 class WallTool:
-    """mode = « tracer » | « prolonger » | « supprimer ». get() rend les segments actuels, set(liste) les remplace."""
+    """mode = « tracer » | « prolonger » | « supprimer ». get() rend les murs affichés ; chaque geste
+    produit des retouches (mapedit.WallEdit) envoyées à on_edit : elles comptent pour les deux cartes."""
 
     def __init__(self, view, mode: str, get: Callable[[], list[Segment]],
-                 set_: Callable[[list[Segment]], None]) -> None:
-        self.view, self.mode, self.get, self.set = view, mode, get, set_
+                 on_edit: Callable[[list[WallEdit]], None]) -> None:
+        self.view, self.mode, self.get, self.on_edit = view, mode, get, on_edit
         self.start = None
         self.grab: tuple[int, int] | None = None         # (segment, extrémité 0/1) saisie pour « prolonger »
         (self.line,) = view.ax.plot([], [], "-", color=S.ACCENT, lw=3, zorder=9, solid_capstyle="round")
@@ -137,8 +139,7 @@ class WallTool:
         if self.mode == "supprimer":
             d = [_point_segment_distance(p, s) for s in segs]
             if d and min(d) < tol:
-                k = int(np.argmin(d))
-                self.set(segs[:k] + segs[k + 1:])
+                self.on_edit([WallEdit(DELETE, segs[int(np.argmin(d))])])
             return True
         if self.mode == "prolonger":
             ends = [(np.hypot(s.x1 - p[0], s.y1 - p[1]), k, 0) for k, s in enumerate(segs)]
@@ -174,9 +175,9 @@ class WallTool:
             k, e = self.grab
             self.grab = None
             new = Segment(x, y, x0, y0) if e == 0 else Segment(x0, y0, x, y)
-            self.set(segs[:k] + [new] + segs[k + 1:])
+            self.on_edit([WallEdit(DELETE, segs[k]), WallEdit(ADD, new)])
         elif np.hypot(x - x0, y - y0) > 0.05:
-            self.set(segs + [Segment(x0, y0, x, y)])
+            self.on_edit([WallEdit(ADD, Segment(x0, y0, x, y))])
         else:
             self.view.redraw()
 

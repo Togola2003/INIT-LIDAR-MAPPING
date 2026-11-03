@@ -1,7 +1,8 @@
 """Le projet de LidarLab : tout ce que l'utilisateur fabrique, séparé de l'interface.
 
-Un projet = des captures (scans + poses), une carte de référence facultative et, si l'utilisateur a
-retouché la carte vectorielle à la main, la liste de ses segments. Le projet est IMMUABLE : chaque
+Un projet = des captures (scans + poses), les retouches des murs faites à la main (journal
+d'opérations, rejoué sur la grid map ET la carte vectorielle), la carte de référence validée pour la
+localisation, et une carte importée facultative (MapTool) pour comparer. Le projet est IMMUABLE : chaque
 action rend un nouveau projet, ce qui donne l'annulation (Ctrl+Z) presque gratuitement.
 
 Ce module ne dépend d'aucune bibliothèque graphique : il est testé seul et pourra servir tel quel
@@ -18,6 +19,8 @@ from typing import Callable
 import numpy as np
 
 from ..geometry import Pose, move_rigid
+from ..mapedit import WallEdit
+from ..refmap import ReferenceMap, from_dict, to_dict
 from ..scan import Scan
 from ..scope.session import Capture, load_session, now_utc, read_any, save_session
 from ..segments import Segment
@@ -32,7 +35,8 @@ HISTORY = 80
 class Project:
     captures: tuple[Capture, ...] = ()
     reference: tuple[Segment, ...] = ()            # carte importée (ex. MapTool), pour comparer
-    manual_segments: tuple[Segment, ...] | None = None   # carte vectorielle retouchée à la main
+    wall_edits: tuple[WallEdit, ...] = ()          # retouches des murs, dans l'ordre
+    reference_map: ReferenceMap | None = None      # carte validée sur laquelle on se localise
     name: str = "Nouveau projet"
     path: str | None = None
 
@@ -108,8 +112,16 @@ def erase_points(project: Project, numbers: set[int], box: tuple[float, float, f
     return replace(project, captures=tuple(caps)), erased
 
 
-def set_manual_segments(project: Project, segments: list[Segment] | None) -> Project:
-    return replace(project, manual_segments=None if segments is None else tuple(segments))
+def add_edits(project: Project, edits: list[WallEdit]) -> Project:
+    return replace(project, wall_edits=project.wall_edits + tuple(edits))
+
+
+def clear_edits(project: Project) -> Project:
+    return replace(project, wall_edits=())
+
+
+def set_reference_map(project: Project, ref: ReferenceMap | None) -> Project:
+    return replace(project, reference_map=ref)
 
 
 def pivot_of(project: Project, numbers: set[int]) -> tuple[float, float]:
@@ -127,10 +139,11 @@ def open_files(project: Project, paths: list[str]) -> tuple[Project, list[int], 
         try:
             if Path(path).suffix.lower() == ".json":
                 project, nums = add_captures(project, load_session(path))
-                segs = json.loads(Path(path).read_text(encoding="utf-8")).get("processing", {}).get(
-                    "carte_vectorielle_retouchee")
-                if segs and project.manual_segments is None:
-                    project = set_manual_segments(project, [Segment(*s) for s in segs])
+                extra = json.loads(Path(path).read_text(encoding="utf-8")).get("processing", {})
+                if extra.get("retouches") and not project.wall_edits:
+                    project = add_edits(project, [WallEdit.from_dict(e) for e in extra["retouches"]])
+                if extra.get("carte_reference") and project.reference_map is None:
+                    project = set_reference_map(project, from_dict(extra["carte_reference"]))
             else:
                 project, nums = add_scans(project, read_any(path))
             added += nums
@@ -147,8 +160,10 @@ def replace_name(project: Project, path: str) -> Project:
 
 def save(project: Project, path: str, extra: dict | None = None) -> Project:
     info = {"projet": project.name}
-    if project.manual_segments is not None:
-        info["carte_vectorielle_retouchee"] = [list(s.as_tuple()) for s in project.manual_segments]
+    if project.wall_edits:
+        info["retouches"] = [e.as_dict() for e in project.wall_edits]
+    if project.reference_map is not None:
+        info["carte_reference"] = to_dict(project.reference_map)
     save_session(list(project.captures), path, {**info, **(extra or {})})
     return replace(project, path=path, name=Path(path).name.split(".")[0])
 

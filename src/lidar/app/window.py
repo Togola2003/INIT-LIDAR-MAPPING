@@ -12,21 +12,28 @@ from __future__ import annotations
 import collections
 import queue
 import sys
+from dataclasses import replace
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import numpy as np
 
+from ..mapedit import apply_to_grid, apply_to_segments
 from ..scope.mapping import MapParams, build_maps
 from ..scope.mapview import Editor, MapView
 from ..scope.processing import Filters
-from ..scope.sources import DemoSource, SerialSource, list_ports
+from ..scope.sources import DemoSource, MapDemoSource, SerialSource, list_ports
 from . import project as P
 from . import style as S
 from .components import ScanList
 from .steps import STEPS
+from .tools import RectTool, WallTool
 
 TICK_MS = 80
+# outils toujours visibles au-dessus de la carte : gomme à points + retouches des murs
+TOOLS = {"gomme": "⌫  Gomme", "tracer": "✎  Tracer un mur", "prolonger": "↔  Prolonger", "supprimer": "✕  Effacer un mur"}
+WALL_MODES = {"tracer", "prolonger", "supprimer"}
+MAPS_STEP = 3
 
 
 class LidarLab:
@@ -42,6 +49,7 @@ class LidarLab:
         self._filtered: dict = {}
         self._maps: dict = {}
         self.tool = None
+        self.tool_mode: str | None = None
         self.step_index = 0
         self._render_job = None
 
@@ -126,11 +134,21 @@ class LidarLab:
         self.view_title.pack(anchor="w")
         self.view_subtitle = ctk.CTkLabel(left, text="", font=S.font(12), text_color=S.MUTED)
         self.view_subtitle.pack(anchor="w")
+        bar = ctk.CTkFrame(card, fg_color="transparent")
+        bar.pack(fill="x", padx=18, pady=(2, 6))
+        strip = ctk.CTkFrame(bar, fg_color=S.SURFACE_2, corner_radius=12)
+        strip.pack(side="left")
+        self.tool_buttons = {}
+        for key, text in TOOLS.items():
+            b = S.button(strip, text, lambda k=key: self.toggle_tool(k), width=10, height=32, fg_color="transparent",
+                         hover_color=S.BORDER, font=S.font(12))
+            b.pack(side="left", padx=3, pady=3)
+            self.tool_buttons[key] = b
         for text, cmd in (("↷", self.redo), ("↶", self.undo)):
-            S.button(top, text, cmd, width=38, font=S.font(15)).pack(side="right", padx=(6, 0))
-        self.ruler_btn = S.button(top, "Règle", self.toggle_ruler, width=70)
+            S.button(bar, text, cmd, width=38, font=S.font(15)).pack(side="right", padx=(6, 0))
+        self.ruler_btn = S.button(bar, "Règle", self.toggle_ruler, width=70)
         self.ruler_btn.pack(side="right", padx=(6, 0))
-        S.button(top, "Tout voir", self.fit_view, width=86).pack(side="right")
+        S.button(bar, "Tout voir", self.fit_view, width=86).pack(side="right")
         holder = ctk.CTkFrame(card, fg_color=S.MAP_BG, corner_radius=10)
         holder.pack(fill="both", expand=True, padx=14)
         self.cursor_var = ctk.StringVar(value="")
@@ -176,6 +194,7 @@ class LidarLab:
         r.bind("<Control-n>", lambda e: self.new_project())
         r.bind("<Control-a>", lambda e: None if self.typing(e) else self.select_all())
         r.bind("<Key>", self._on_key)
+        r.bind("<Escape>", lambda e: self.toggle_tool(None), add="+")
 
     @staticmethod
     def typing(event) -> bool:
@@ -207,6 +226,7 @@ class LidarLab:
                 panel.pack(fill="both", expand=True)
             else:
                 panel.pack_forget()
+        self._tool_off()
         st = self.step
         self.view_title.configure(text=st.title)
         self.view_subtitle.configure(text=st.headline)
@@ -223,6 +243,50 @@ class LidarLab:
     def _render_now(self) -> None:
         self._render_job = None
         self.step.render()
+
+    # ------------------------------------------------------------------ outils de la barre
+    def toggle_tool(self, mode: str | None) -> None:
+        """Gomme ou retouche des murs. Re-cliquer (ou Échap) désactive l'outil."""
+        if mode is None or mode == self.tool_mode:
+            if self.tool_mode is not None:
+                self._tool_off()
+                self.step.enter()
+            return
+        if mode in WALL_MODES and self.step_index != MAPS_STEP:
+            self.go(MAPS_STEP)                    # les murs se voient et se retouchent sur l'étape Cartes
+        if mode == "gomme":
+            self.set_tool(RectTool(self.map, self.erase_box))
+            self.status("Gomme : glisse un rectangle sur les points à effacer (tous les scans visibles). Échap = arrêter.")
+        else:
+            self.set_tool(WallTool(self.map, mode, self.final_segments, self.add_edits))
+            self.status({"tracer": "Tracer : glisse d'un point à un autre pour ajouter un mur (extrémités aimantées).",
+                         "prolonger": "Prolonger : attrape l'extrémité d'un mur et déplace-la.",
+                         "supprimer": "Effacer : clique sur un mur pour le supprimer."}[mode] + " Échap = arrêter.")
+        self.tool_mode = mode
+        for k, b in self.tool_buttons.items():
+            on = k == mode
+            b.configure(fg_color=S.ACCENT if on else "transparent", text_color="#FFFFFF" if on else S.INK,
+                        hover_color=S.ACCENT_HOVER if on else S.BORDER)
+
+    def _tool_off(self) -> None:
+        self.tool_mode = None
+        self.set_tool(None)
+        for b in self.tool_buttons.values():
+            b.configure(fg_color="transparent", text_color=S.INK, hover_color=S.BORDER)
+
+    def erase_box(self, box) -> None:
+        nums = {c.number for c in self.project.visible}
+        new, n = P.erase_points(self.project, nums, box)
+        if n:
+            self.apply(new, f"{n} point(s) effacé(s) : la grid map, les murs et la localisation en tiennent compte. "
+                            "Ctrl+Z pour annuler.")
+        else:
+            self.status("Aucun point dans ce rectangle.")
+
+    def add_edits(self, edits) -> None:
+        self.apply(P.add_edits(self.project, edits),
+                   f"Retouche enregistrée ({len(self.project.wall_edits) + len(edits)} au total) : elle compte pour la "
+                   "grid map, les murs et la localisation. Ctrl+Z pour annuler.")
 
     def set_tool(self, tool) -> None:
         if self.tool is not None:
@@ -362,6 +426,23 @@ class LidarLab:
     def points(self, cap) -> np.ndarray:
         return self.filtered(cap).global_points()
 
+    def final_maps(self, params: MapParams | None = None):
+        """Cartes des scans visibles AVEC les retouches à la main (murs ajoutés / supprimés) : ce que
+        l'utilisateur voit, exporte et valide comme référence."""
+        res = self.maps(params=params)
+        edits = self.project.wall_edits
+        if not edits:
+            return res
+        grid = apply_to_grid(res.grid, edits) if res.grid is not None else None
+        segs = apply_to_segments(res.segments, edits) if (params or self.map_params()).vector.enabled else res.segments
+        return replace(res, grid=grid, segments=segs)
+
+    def final_segments(self) -> list:
+        if not self.project.visible:
+            return []
+        p = self.map_params()
+        return list(self.final_maps(replace(p, grid=replace(p.grid, enabled=False))).segments)
+
     def maps(self, caps=None, params: MapParams | None = None):
         caps = self.project.visible if caps is None else caps
         params = params or self.map_params()
@@ -401,6 +482,16 @@ class LidarLab:
     def demo(self) -> None:
         self.disconnect()
         self._start(DemoSource(self.events), "Démo (robot simulé)")
+
+    def map_demo(self, walls, waypoints) -> None:
+        """Robot simulé qui roule dans la carte de référence : pour essayer la localisation en direct."""
+        self.disconnect()
+        self._start(MapDemoSource(self.events, walls, waypoints), "Démo sur ta carte")
+
+    @property
+    def demo_truth(self):
+        """Vraie pose du robot de démo (None avec le vrai robot)."""
+        return getattr(self.source, "truth", None)
 
     def _start(self, source, label: str) -> None:
         self.source = source

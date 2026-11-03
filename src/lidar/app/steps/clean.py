@@ -9,10 +9,7 @@ import numpy as np
 from ...scope.processing import Filters
 from .. import project as P
 from .. import style as S
-from ..tools import RectTool
 from .base import Step
-
-ERASE_IN = ["Scans sélectionnés", "Tous les scans visibles"]
 
 
 class CleanStep(Step):
@@ -41,15 +38,9 @@ class CleanStep(Step):
         self.f_nb.pack(fill="x")
         self.f_rad.pack(fill="x")
 
-        card = S.Card(panel, "Gomme", "Glisse un rectangle sur la carte : les points dedans sont effacés "
-                                      "(Ctrl+Z pour annuler).")
-        card.pack(fill="x", pady=(0, 10))
-        self.erase_in = S.segmented(card.body, ERASE_IN, ERASE_IN[1], lambda v: None)
-        self.erase_in.pack(fill="x", pady=(0, 8))
-        self.eraser = S.toggle(card.body, "Gomme active", self._toggle_eraser)
-        self.eraser.pack(anchor="w")
-
-        card = S.Card(panel, "Scans")
+        card = S.Card(panel, "Gomme et scans", "⌫ Gomme (au-dessus de la carte) : glisse un rectangle pour effacer "
+                                               "un passant, un objet déplacé… Les points effacés disparaissent de "
+                                               "toutes les cartes. Ctrl+Z pour annuler.")
         card.pack(fill="x", pady=(0, 10))
         S.button(card.body, "Supprimer les scans sélectionnés", self.delete_selected, "danger").pack(fill="x")
 
@@ -66,32 +57,7 @@ class CleanStep(Step):
     def _changed(self, _v=None) -> None:
         self.app.render(200)
 
-    # ------------------------------------------------------------------ gomme / suppression
-    def enter(self) -> None:
-        if self.eraser.get():
-            self._toggle_eraser()
-
-    def _toggle_eraser(self) -> None:
-        if self.eraser.get():
-            self.app.set_tool(RectTool(self.app.map, self.erase))
-            self.app.status("Gomme active : glisse un rectangle sur les points à effacer.")
-        else:
-            self.app.set_tool(None)
-
-    def erase(self, box) -> None:
-        if self.erase_in.get() == ERASE_IN[0]:
-            nums = set(self.app.sel)
-        else:
-            nums = {c.number for c in self.project.visible}
-        if not nums:
-            self.app.status("Aucun scan concerné : sélectionne un scan ou choisis « tous les scans visibles ».")
-            return
-        new, n = P.erase_points(self.project, nums, box)
-        if n:
-            self.app.apply(new, f"{n} point(s) effacé(s). Ctrl+Z pour annuler.")
-        else:
-            self.app.status("Aucun point dans ce rectangle.")
-
+    # ------------------------------------------------------------------ suppression
     def delete_selected(self) -> None:
         sel = set(self.app.sel)
         if not sel:
@@ -108,7 +74,7 @@ class CleanStep(Step):
     def render(self) -> None:
         app, f = self.app, self.filters()
         caps = self.project.visible
-        kept, out, iso = [], [], []
+        out, iso = [], []
         total = 0
         for c in caps:
             raw = c.scan.filtered(0.0001, 1e9, 0)
