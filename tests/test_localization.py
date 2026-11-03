@@ -62,3 +62,19 @@ def test_pose_error_wraps_angles():
 def test_missing_reference_is_reported():
     with pytest.raises(ValueError):
         localize("scans · ICP point à point", np.zeros((20, 2)), Pose(), References())
+
+
+def test_global_localization_without_initial_pose():
+    from lidar.localization.globalloc import global_localize
+    from lidar.refmap import build_reference
+    walls = [(0, 0, 6, 0), (6, 0, 6, 4), (6, 4, 0, 4), (0, 4, 0, 0), (1, 1, 2.2, 1), (2.2, 1, 2.2, 1.6),
+             (4.2, 2.6, 5, 2.6), (5, 2.6, 5, 3.3)]
+    poses = [Pose(1, 3, 0), Pose(3, 2, 45), Pose(5, 1, 100), Pose(4, 3.4, -90)]
+    maps = [simulate_scan(p, walls=walls, noise_m=0.005, seed=k).filtered() for k, p in enumerate(poses)]
+    ref = build_reference(maps, [str(k) for k in range(len(maps))])
+    truth = Pose(2.6, 2.7, 133)
+    scan = simulate_scan(truth, walls=walls, noise_m=0.01, seed=11).filtered()
+    res = global_localize(scan.local_points(), ref.grid, ref.segments)
+    pos, ang = pose_error(res.pose, truth)
+    assert pos < 0.05 and ang < 2.0
+    assert res.inliers > 0.6 and not res.ambiguous and res.positions > 50

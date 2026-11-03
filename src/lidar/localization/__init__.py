@@ -20,6 +20,7 @@ from . import grid as G
 from . import scans as S
 from . import vector as V
 from .common import LocResult, pose_error
+from .globalloc import GlobalResult, global_localize
 
 
 @dataclass(frozen=True)
@@ -86,4 +87,4 @@ def localize(method: str, points_local: np.ndarray, initial, refs: References) -
     return fn(points_local, initial, refs)
 
 
-__all__ = ["METHODS", "LocResult", "References", "localize", "pose_error"]
+__all__ = ["METHODS", "GlobalResult", "LocResult", "References", "global_localize", "localize", "pose_error"]
