@@ -50,44 +50,46 @@ class Editor:
 
 
 class MapView:
-    def __init__(self, master, on_cursor: Callable[[str], None]) -> None:
+    def __init__(self, master, on_cursor: Callable[[str], None], theme=None) -> None:
+        self.T = theme or T          # palette : thème sombre de LidarScope par défaut, clair pour LidarLab
         self.on_cursor = on_cursor
-        self.fig = Figure(facecolor=T.BG)
-        self.ax = self.fig.add_axes([0.055, 0.06, 0.935, 0.925], facecolor=T.MAP_BG)
+        self.fig = Figure(facecolor=self.T.BG)
+        self.ax = self.fig.add_axes([0.055, 0.06, 0.935, 0.925], facecolor=self.T.MAP_BG)
         self.ax.set_aspect("equal", adjustable="box")
-        self.ax.grid(True, color=T.GRID, lw=0.8)
-        self.ax.tick_params(colors=T.MUTED, labelsize=8)
+        self.ax.grid(True, color=self.T.GRID, lw=0.8)
+        self.ax.tick_params(colors=self.T.MUTED, labelsize=8)
         for sp in self.ax.spines.values():
-            sp.set_color(T.BORDER)
-        self.ax.set_xlabel("x (m)", color=T.MUTED, fontsize=9)
-        self.ax.set_ylabel("y (m)", color=T.MUTED, fontsize=9)
-        self.ax.axhline(0, color=T.BORDER, lw=1)
-        self.ax.axvline(0, color=T.BORDER, lw=1)
+            sp.set_color(self.T.BORDER)
+        self.ax.set_xlabel("x (m)", color=self.T.MUTED, fontsize=9)
+        self.ax.set_ylabel("y (m)", color=self.T.MUTED, fontsize=9)
+        self.ax.axhline(0, color=self.T.BORDER, lw=1)
+        self.ax.axvline(0, color=self.T.BORDER, lw=1)
 
-        self.live_art = self.ax.scatter([], [], s=5, c=T.LIVE, zorder=4, linewidths=0)
+        self.live_art = self.ax.scatter([], [], s=5, c=self.T.LIVE, zorder=4, linewidths=0)
         self.live_segs: list = []
-        (self.robot_line,) = self.ax.plot([], [], "-", color=T.ROBOT, lw=2.5, zorder=6)
-        (self.robot_dot,) = self.ax.plot([], [], "o", color=T.ROBOT, ms=8, zorder=6)
+        (self.robot_line,) = self.ax.plot([], [], "-", color=self.T.ROBOT, lw=2.5, zorder=6)
+        (self.robot_dot,) = self.ax.plot([], [], "o", color=self.T.ROBOT, ms=8, zorder=6)
         self.capture_arts: dict[int, list] = {}
         self.analysis_arts: list = []
-        (self.ruler_line,) = self.ax.plot([], [], "--o", color=T.WARN, lw=1.5, ms=5, zorder=7)
-        self.ruler_text = self.ax.text(0, 0, "", color=T.WARN, fontsize=10, zorder=8,
-                                       bbox=dict(facecolor=T.SURFACE, edgecolor=T.WARN, boxstyle="round,pad=0.3"))
+        (self.ruler_line,) = self.ax.plot([], [], "--o", color=self.T.WARN, lw=1.5, ms=5, zorder=7)
+        self.ruler_text = self.ax.text(0, 0, "", color=self.T.WARN, fontsize=10, zorder=8,
+                                       bbox=dict(facecolor=self.T.SURFACE, edgecolor=self.T.WARN, boxstyle="round,pad=0.3"))
         self.ruler_text.set_visible(False)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=master)
         self.widget = self.canvas.get_tk_widget()
-        self.widget.configure(bg=T.BG, highlightthickness=0)
+        self.widget.configure(bg=self.T.BG, highlightthickness=0)
         self.ruler_mode = False
         self._ruler_pts: list[tuple[float, float]] = []
         self._drag = None
         self._gesture = None
+        self.tool = None        # outil temporaire (gomme, tracé de mur, pose initiale) : press/motion/release
         self.editor: Editor | None = None
         self.movable: dict[object, list] = {}      # clé de scan -> artistes à transformer pendant un geste
         self.robot_pose = Pose()
         self.gesture_text = self.ax.text(0.01, 0.99, "", transform=self.ax.transAxes, va="top", ha="left",
-                                         color=T.WARN, fontsize=11, zorder=9, family=T.MONO,
-                                         bbox=dict(facecolor=T.SURFACE, edgecolor=T.WARN, boxstyle="round,pad=0.4"))
+                                         color=self.T.WARN, fontsize=11, zorder=9, family=self.T.MONO,
+                                         bbox=dict(facecolor=self.T.SURFACE, edgecolor=self.T.WARN, boxstyle="round,pad=0.4"))
         self.gesture_text.set_visible(False)
         for name, cb in (("scroll_event", self._on_scroll), ("button_press_event", self._on_press),
                          ("button_release_event", self._on_release), ("motion_notify_event", self._on_motion)):
@@ -108,7 +110,7 @@ class MapView:
                 self.live_art.set_clim(0, 255)
             else:
                 self.live_art.set_array(None)
-                self.live_art.set_facecolor(T.LIVE)
+                self.live_art.set_facecolor(self.T.LIVE)
         for sg in segments:
             (ln,) = self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color="#00d2ff", lw=2, zorder=5)
             self.live_segs.append(ln)
@@ -155,7 +157,8 @@ class MapView:
         for sg in reference:
             self.analysis_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "--", color="#a371f7", lw=1.6, zorder=2)
         for sg in segments:
-            self.analysis_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color="#ffffff", lw=2.4,
+            self.analysis_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-",
+                                               color=getattr(self.T, "SEGMENT", "#ffffff"), lw=2.4,
                                                zorder=5, solid_capstyle="round")
         self.redraw()
 
@@ -311,6 +314,8 @@ class MapView:
     def _on_press(self, ev) -> None:
         if ev.xdata is None or ev.button not in (1, 3):
             return
+        if self.tool is not None and self.tool.press(ev):
+            return
         if self.ruler_mode and ev.button == 1:
             self._ruler_click(ev.xdata, ev.ydata)
             return
@@ -321,12 +326,16 @@ class MapView:
         if ev.button == 1:
             self._drag = (ev.x, ev.y, self.ax.get_xlim(), self.ax.get_ylim())
 
-    def _on_release(self, _ev) -> None:
+    def _on_release(self, ev) -> None:
         self._drag = None
+        if self.tool is not None:
+            self.tool.release(ev)
         if self._gesture is not None:
             self._end_gesture()
 
     def _on_motion(self, ev) -> None:
+        if self.tool is not None and ev.xdata is not None and self.tool.motion(ev):
+            return
         if self._gesture is not None and ev.xdata is not None:
             self._apply_gesture(ev)
             return
