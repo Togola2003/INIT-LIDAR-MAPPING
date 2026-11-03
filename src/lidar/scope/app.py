@@ -2,7 +2,10 @@
 
     .venv/Scripts/python -m lidar.scope        (ou double-clic sur LidarScope.bat)
 
-Raccourcis : Espace = pause · C = capturer · M = règle de mesure · R = recentrer
+Raccourcis : Espace = pause · C = capturer (récolte N tours, C de nouveau = arrêter)
+            Entrée = garder la capture · Échap = la jeter · M = règle · R = recentrer
+Captures (bouton ✋) : glisser = déplacer · clic droit glissé = tourner · Ctrl + clic = sélection multiple
+            Ctrl + molette = ±1° · flèches / A E = déplacer / tourner · Ctrl+Z = annuler
 """
 
 from __future__ import annotations
@@ -18,16 +21,17 @@ import customtkinter as ctk
 import numpy as np
 
 from ..extraction import scan_to_segments
-from ..geometry import Pose
+from ..geometry import Pose, move_rigid
 from ..scan import Scan
 from ..segments import Segment
 from ..vectormap import load_vector_map
 from . import theme as T
 from .carto_panel import CartoPanel
+from .collector import COMBINE_MODES, Collection, finish
 from .export_dialog import ExportDialog
 from .exporter import ExportOptions, export_bundle
 from .mapping import beam_image, build_maps
-from .mapview import MapView
+from .mapview import Editor, MapView
 from .processing import average_scans, scan_stats
 from .session import Capture, now_utc, read_any, save_session
 from .sources import FORMAT_TELEPLOT, DemoSource, Frame, SerialSource, list_ports
@@ -53,10 +57,14 @@ class LidarScope:
         self.captures: list[Capture] = []
         self.reference: list[Segment] = []     # carte de référence importée (ex. murs dessinés dans MapTool)
         self.selected: int | None = None
+        self.sel: set[int] = set()                    # captures déplacées / tournées ensemble
+        self.history: list[dict[int, Pose]] = []      # poses avant chaque déplacement (Ctrl+Z)
         self.scan_times: collections.deque = collections.deque(maxlen=20)
         self.scan_count = 0
         self.telemetry: dict[str, float] = {}
         self._framed = False
+        self.collection: Collection | None = None   # récolte de tours en cours
+        self.preview: tuple | None = None           # (scan, bilan, lignes brutes, format) en attente de « Garder »
         self._analysis_job = None
         self.last_result = None
 
@@ -72,8 +80,12 @@ class LidarScope:
         self._build_map(body)
         self._build_sidebar(body)
         for key, fn in (("<space>", self.toggle_pause), ("c", self.capture), ("m", self.toggle_ruler),
-                        ("r", self.recenter)):
+                        ("r", self.recenter), ("<Return>", self.keep_preview), ("<Escape>", self.drop_preview)):
             root.bind(key, lambda e, f=fn: None if self._typing(e) else f())
+        for key, d in {"<Left>": (-1, 0, 0), "<Right>": (1, 0, 0), "<Up>": (0, 1, 0), "<Down>": (0, -1, 0),
+                       "a": (0, 0, 1), "e": (0, 0, -1)}.items():
+            root.bind(key, lambda ev, d=d: None if self._typing(ev) or self.map.editor is None else self.nudge(*d))
+        root.bind("<Control-z>", lambda ev: self.undo())
         root.protocol("WM_DELETE_WINDOW", self.quit)
         self.refresh_ports()
         self._tick_job = root.after(REFRESH_MS, self._tick)
@@ -125,22 +137,27 @@ class LidarScope:
         self.live_seg_switch = ctk.CTkSwitch(tools, text="Segments en direct", font=font(11),
                                              progress_color=T.ACCENT, command=self._redraw_live)
         self.live_seg_switch.pack(side="left", padx=14)
-        ctk.CTkLabel(tools, text="molette : zoom · glisser : déplacer", font=font(10),
-                     text_color=T.MUTED).pack(side="right")
+        self.edit_btn = button(tools, "✋  Déplacer les captures", self.toggle_edit, width=170)
+        self.edit_btn.pack(side="right")
+        button(tools, "↶", self.undo, width=34).pack(side="right", padx=6)
         holder = ctk.CTkFrame(card, fg_color=T.BG, corner_radius=8)
         holder.pack(fill="both", expand=True, padx=10)
         self.cursor_var = ctk.StringVar(value="Connecte le robot, lance la démo, ou importe des données.")
         self.map = MapView(holder, on_cursor=self.cursor_var.set)
         self.map.widget.pack(fill="both", expand=True, padx=2, pady=2)
         ctk.CTkLabel(card, textvariable=self.cursor_var, font=font(11, mono=True), text_color=T.MUTED,
-                     anchor="w").pack(fill="x", padx=14, pady=(4, 8))
+                     anchor="w").pack(fill="x", padx=14, pady=(4, 0))
+        ctk.CTkLabel(card, text="molette : zoom · glisser le vide : vue · ✋ actif : glisser une capture = la déplacer, "
+                     "clic droit glissé = la tourner, Ctrl+clic = plusieurs, Ctrl+Z = annuler", font=font(10),
+                     text_color=T.MUTED, anchor="w").pack(fill="x", padx=14, pady=(0, 8))
 
     def _build_sidebar(self, parent) -> None:
-        tabs = ctk.CTkTabview(parent, width=400, fg_color=T.SURFACE, corner_radius=12,
+        tabs = ctk.CTkTabview(parent, width=400, fg_color=T.SURFACE, corner_radius=12, command=self._tab_changed,
                               segmented_button_selected_color=T.ACCENT,
                               segmented_button_selected_hover_color=T.ACCENT_HOVER,
                               segmented_button_unselected_color=T.SURFACE_2, text_color=T.INK)
         tabs.grid(row=0, column=1, sticky="ns")
+        self.tabs = tabs
         frames = {}
         for name in ("Direct", "Captures", "Cartographie", "Données"):
             tabs.add(name)
@@ -179,13 +196,39 @@ class LidarScope:
         self.pose_entry.pack(padx=10, pady=(10, 4))
         ctk.CTkLabel(box, text="Le direct s'affiche à cette pose sur la carte.", font=font(10),
                      text_color=T.MUTED).pack(pady=(0, 8))
-        box = section(tab, "Capture")
-        self.avg_slider = LabeledSlider(box, "Moyenne sur N tours", 1, 10, 3, "{:.0f}", lambda v: None, steps=9)
+        box = section(tab, "Capture (récolte de plusieurs tours)")
+        self.avg_slider = LabeledSlider(box, "Tours à récolter", 1, 30, 10, "{:.0f}", lambda v: None, steps=29)
         self.avg_slider.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkLabel(box, text="Combiner les tours", font=font(11), text_color=T.MUTED).pack(anchor="w", padx=12)
+        self.combine_mode = ctk.CTkSegmentedButton(box, values=list(COMBINE_MODES), selected_color=T.ACCENT,
+                                                   selected_hover_color=T.ACCENT_HOVER, unselected_color=T.SURFACE)
+        self.combine_mode.set(COMBINE_MODES[0])
+        self.combine_mode.pack(anchor="w", padx=12, pady=(0, 4))
+        ctk.CTkLabel(box, text="Médiane : un point par angle, bruit réduit · Tous : nuage plus dense", font=font(10),
+                     text_color=T.MUTED).pack(anchor="w", padx=12)
         self.view_range = LabeledSlider(box, "Taille de la vue (Recentrer)", 1, 12, 5, "± {:.1f} m", lambda v: None)
-        self.view_range.pack(fill="x", padx=12, pady=(4, 10))
-        button(tab, "📸   Capturer ce scan      C", self.capture, primary=True, height=46).pack(fill="x", pady=(16, 4))
-        ctk.CTkLabel(tab, text="Espace : figer l'image avant de capturer", font=font(10), text_color=T.MUTED).pack()
+        self.view_range.pack(fill="x", padx=12, pady=(6, 10))
+        self.capture_btn = button(tab, "📸   Capturer (récolter les tours)     C", self.capture, primary=True,
+                                  height=46)
+        self.capture_btn.pack(fill="x", pady=(16, 4))
+        self.collect_bar = ctk.CTkProgressBar(tab, progress_color=T.ACCENT, fg_color=T.SURFACE_2, height=8)
+        self.collect_bar.set(0)
+        self.collect_bar.pack(fill="x", pady=(2, 2))
+        self.collect_label = ctk.CTkLabel(tab, text="Le robot doit rester immobile pendant la récolte.",
+                                          font=font(10), text_color=T.MUTED)
+        self.collect_label.pack()
+        self.preview_box = ctk.CTkFrame(tab, fg_color=T.SURFACE_2, corner_radius=10, border_width=2,
+                                        border_color=T.WARN)
+        ctk.CTkLabel(self.preview_box, text="APERÇU DE LA CAPTURE (jaune sur la carte)", font=font(10, "bold"),
+                     text_color=T.WARN).pack(anchor="w", padx=12, pady=(8, 0))
+        self.preview_text = ctk.CTkLabel(self.preview_box, text="", font=font(11, mono=True), text_color=T.INK,
+                                         justify="left")
+        self.preview_text.pack(anchor="w", padx=12, pady=4)
+        row = ctk.CTkFrame(self.preview_box, fg_color="transparent")
+        row.pack(fill="x", padx=8, pady=(0, 10))
+        button(row, "✓ Garder  ⏎", self.keep_preview, primary=True, width=110).pack(side="left", padx=3)
+        button(row, "↻ Refaire", self.redo_preview, width=90).pack(side="left", padx=3)
+        button(row, "✕ Jeter  Échap", self.drop_preview, width=110).pack(side="left", padx=3)
         box = section(tab, "Télémétrie")
         self.tel_label = ctk.CTkLabel(box, text="—", font=font(11, mono=True), text_color=T.INK, justify="left")
         self.tel_label.pack(anchor="w", padx=12, pady=8)
@@ -292,6 +335,8 @@ class LidarScope:
                 self.scan_times.append(time.monotonic())
                 if not self.paused:
                     self.recent.append(ev.payload)
+                if self.collection is not None:
+                    self.collection = self.collection.add(ev.payload)
             elif ev.kind == "telemetry":
                 self.telemetry[ev.payload[0]] = ev.payload[1]
             elif ev.kind == "status":
@@ -305,6 +350,8 @@ class LidarScope:
             self.led.configure(text_color=T.ACCENT)
             if not self.paused:
                 self._redraw_live()
+        if self.collection is not None:
+            self._collect_step()
         self._tick_job = self.root.after(REFRESH_MS, self._tick)
 
     @property
@@ -326,7 +373,8 @@ class LidarScope:
         if live is None:
             return
         mode = self.color_mode.get()
-        shown = self.carto.filters().apply(live).with_pose(pose) if mode != "Masqué" else None
+        hidden = mode == "Masqué" or self.preview is not None     # l'aperçu reste seul : pas de clignotement
+        shown = self.carto.filters().apply(live).with_pose(pose) if not hidden else None
         segs = scan_to_segments(shown) if shown is not None and self.live_seg_switch.get() else []
         self.map.draw_live(shown, mode == "Intensité" and not np.isnan(live.intensities).all(), segs)
         if not self._framed:
@@ -370,17 +418,91 @@ class LidarScope:
 
     # ================================================================== captures
     def capture(self) -> None:
-        if not self.recent:
-            self.status("Rien à capturer : aucun scan reçu.")
+        """C : démarre la récolte de N tours, ou l'arrête si elle est en cours.
+        En pause, on capture tout de suite les tours déjà reçus (image figée)."""
+        if self.collection is not None:
+            self._end_collection()
             return
         pose = self._pose(self.pose_entry, quiet=False)
         if pose is None:
             return
-        frames = list(self.recent)[-int(round(self.avg_slider.get())):]
-        scan = average_scans([f.scan for f in frames]).with_pose(pose)
-        cap = self._add_capture(scan, source=frames[-1].fmt, raw=tuple(f.raw for f in frames))
-        self.status(f"{cap.title} capturé : {len(scan)} points, moyenne de {len(frames)} tour(s), "
-                    f"pose ({pose.x:.2f}, {pose.y:.2f}, {pose.theta_deg:.0f}°).")
+        target = int(round(self.avg_slider.get()))
+        if self.paused:
+            if not self.recent:
+                self.status("Rien à capturer : aucun scan reçu.")
+                return
+            col = Collection(target, pose)
+            for f in list(self.recent)[-target:]:
+                col = col.add(f)
+            self.collection = col
+            self._end_collection()
+            return
+        if self.source is None:
+            self.status("Connecte le robot (ou lance la démo) avant de capturer.")
+            return
+        self.drop_preview()
+        self.collection = Collection(target, pose)
+        self.capture_btn.configure(text="■   Arrêter la récolte     C", fg_color=T.WARN, hover_color="#d4ac0d")
+        self._collect_step()
+
+    def _collect_step(self) -> None:
+        col = self.collection
+        self.collect_bar.set(col.progress)
+        self.collect_label.configure(text=f"Récolte : {col.count} / {col.target} tours… ne bouge pas le robot",
+                                     text_color=T.WARN)
+        if col.done or col.stalled():
+            self._end_collection()
+
+    def _end_collection(self) -> None:
+        col, self.collection = self.collection, None
+        self.capture_btn.configure(text="📸   Capturer (récolter les tours)     C", fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER)
+        self.collect_bar.set(0)
+        if col is None or not col.count:
+            self.collect_label.configure(text="Aucun tour reçu : récolte annulée.", text_color=T.DANGER)
+            return
+        scan, info = finish(col, self.combine_mode.get())
+        self.preview = (scan, info, tuple(f.raw for f in col.frames), col.frames[-1].fmt)
+        self.map.draw_capture(0, self.carto.filters().apply(scan), T.WARN, True, True)
+        self.map.draw_live(None, False, [])
+        noise = info["bruit_m"]
+        quality = ("1 seul tour" if noise is None else "bon" if noise < 0.02 else "moyen : quelque chose bouge ?")
+        short = "  ⚠ arrêtée avant la fin" if info["tours"] < info["voulus"] else ""
+        self.preview_text.configure(text="\n".join([
+            f"Tours récoltés  {info['tours']} / {info['voulus']}{short}",
+            f"Durée           {info['duree_s']} s",
+            f"Points          {info['points']}  ({info['points_par_tour']} / tour)",
+            f"Bruit distances {'—' if noise is None else f'{noise * 100:.1f} cm'}  → {quality}",
+            f"Combinaison     {info['mode']}"]))
+        self.preview_box.pack(fill="x", pady=(8, 4), after=self.collect_label)
+        self.collect_label.configure(text="Garder (Entrée), refaire, ou jeter (Échap).", text_color=T.MUTED)
+
+    def keep_preview(self) -> None:
+        if self.preview is None:
+            return
+        scan, info, raw, fmt = self.preview
+        self._clear_preview()
+        cap = self._add_capture(scan, source=fmt, raw=raw)
+        p = scan.pose
+        self.status(f"{cap.title} gardé : {info['points']} points, {info['tours']} tour(s) "
+                    f"({info['mode'].lower()}), pose ({p.x:.2f}, {p.y:.2f}, {p.theta_deg:.0f}°).")
+
+    def redo_preview(self) -> None:
+        self._clear_preview()
+        if self.paused:
+            self.toggle_pause()
+        self.capture()
+
+    def drop_preview(self) -> None:
+        if self.preview is not None:
+            self._clear_preview()
+            self.status("Capture jetée.")
+
+    def _clear_preview(self) -> None:
+        self.preview = None
+        self.preview_box.pack_forget()
+        self.map.draw_capture(0, None)
+        self._redraw_live()
 
     def _add_capture(self, scan: Scan, label: str = "", source: str = "fichier", raw: tuple = ()) -> Capture:
         n = max((c.number for c in self.captures), default=0) + 1
@@ -412,8 +534,9 @@ class LidarScope:
                          font=font(12), text_color=T.MUTED).pack(pady=20)
             return
         for cap in self.captures:
-            sel = cap.number == self.selected
-            row = ctk.CTkFrame(self.capture_list, fg_color=T.SURFACE_2, corner_radius=10, border_width=2,
+            sel = cap.number in self.sel
+            row = ctk.CTkFrame(self.capture_list, fg_color=T.SURFACE_2, corner_radius=10,
+                               border_width=3 if cap.number == self.selected else 2,
                                border_color=cap.color if sel else T.SURFACE_2)
             row.pack(fill="x", pady=3)
             ctk.CTkLabel(row, text="●", font=font(20), text_color=cap.color if cap.visible else T.MUTED,
@@ -429,15 +552,23 @@ class LidarScope:
                    width=32, height=30).pack(side="right")
             for w in (row, info, *info.winfo_children()):
                 w.bind("<Button-1>", lambda e, n=cap.number: self.select(n))
+                w.bind("<Control-Button-1>", lambda e, n=cap.number: self.select(n, additive=True))
 
-    def select(self, number: int) -> None:
+    def select(self, number: int, additive: bool = False) -> None:
         cap = self._find(number)
         if cap is None:
             return
+        if additive and number in self.sel and len(self.sel) > 1:
+            self.sel = self.sel - {number}
+            number = self.selected if self.selected in self.sel else min(self.sel)
+            cap = self._find(number)
+        else:
+            self.sel = (self.sel | {number}) if additive else {number}
         self.selected = number
         p = cap.scan.pose
         self.cap_pose.set(p.x, p.y, p.theta_deg)
-        self.sel_label.configure(text=f"● {cap.title}", text_color=cap.color)
+        extra = f"  + {len(self.sel) - 1} autre(s)" if len(self.sel) > 1 else ""
+        self.sel_label.configure(text=f"● {cap.title}{extra}", text_color=cap.color)
         st = scan_stats(cap.scan, self.carto.filters())
         txt = [f"Points           {st['points']}", f"Gardés (filtres) {st['kept']}",
                f"Sans écho        {st['no_echo_pct']:.0f} %"]
@@ -454,20 +585,78 @@ class LidarScope:
             self.schedule_analysis()
 
     def nudge(self, dx: int, dy: int, dtheta: int) -> None:
-        cap = self._find(self.selected)
-        if cap is None:
+        """Déplace / tourne toute la sélection (rotation autour de son centre)."""
+        if not self.sel:
             self.status("Sélectionne d'abord une capture.")
             return
         step_m, step_deg = NUDGES[self.nudge_mode.get()]
-        new = replace(cap, scan=cap.scan.with_pose(cap.scan.pose.moved(dx * step_m, dy * step_m, dtheta * step_deg)))
-        self._replace(new)
-        p = new.scan.pose
-        self.cap_pose.set(p.x, p.y, p.theta_deg)
+        self._move(set(self.sel), dx * step_m, dy * step_m, dtheta * step_deg, self._pivot(self.sel))
 
     def apply_pose(self) -> None:
         cap, pose = self._find(self.selected), self._pose(self.cap_pose, quiet=False)
         if cap and pose:
+            self._remember()
             self._replace(replace(cap, scan=cap.scan.with_pose(pose)))
+
+    # ------------------------------------------------------------------ souris : déplacer les captures
+    def _editor(self) -> Editor:
+        return Editor(pick=self._pick, selection=lambda: self.sel, select=self.select, pivot=self._pivot,
+                      commit=self._move)
+
+    def toggle_edit(self, on: bool | None = None) -> None:
+        on = (self.map.editor is None) if on is None else on
+        self.map.set_editor(self._editor() if on else None)
+        self.edit_btn.configure(fg_color=T.ACCENT if on else T.SURFACE_2, text_color="#06120b" if on else T.INK)
+        if on:
+            self.status("Glisse une capture pour la déplacer, clic droit glissé pour la tourner (Ctrl+Z annule).")
+
+    def _tab_changed(self) -> None:
+        if self.tabs.get() == "Captures" and self.captures and self.map.editor is None:
+            self.toggle_edit(True)
+
+    def _pick(self, x: float, y: float, tol: float) -> int | None:
+        best, best_d, click = None, tol, np.array([x, y])
+        filters = self.carto.filters()
+        for c in self.captures:
+            if not c.visible:
+                continue
+            pts = np.vstack([filters.apply(c.scan).global_points(), [[c.scan.pose.x, c.scan.pose.y]]])
+            d = float(np.min(np.hypot(*(pts - click).T)))
+            if d < best_d:
+                best, best_d = c.number, d
+        return best
+
+    def _pivot(self, keys) -> tuple[float, float]:
+        poses = [c.scan.pose for c in self.captures if c.number in keys]
+        return (float(np.mean([p.x for p in poses])), float(np.mean([p.y for p in poses]))) if poses else (0.0, 0.0)
+
+    def _remember(self) -> None:
+        self.history = (self.history + [{c.number: c.scan.pose for c in self.captures}])[-60:]
+
+    def _move(self, keys, dx: float, dy: float, dth: float, pivot) -> None:
+        self._remember()
+        self._set_poses({c.number: move_rigid(c.scan.pose, dx, dy, dth, pivot)
+                         for c in self.captures if c.number in keys})
+
+    def _set_poses(self, poses: dict[int, Pose]) -> None:
+        self.captures = [replace(c, scan=c.scan.with_pose(poses[c.number])) if c.number in poses else c
+                         for c in self.captures]
+        for c in self.captures:
+            if c.number in poses:
+                self._draw_capture(c)
+        cap = self._find(self.selected)
+        if cap:
+            p = cap.scan.pose
+            self.cap_pose.set(p.x, p.y, p.theta_deg)
+        self._refresh_capture_list()
+
+    def undo(self) -> None:
+        if not self.history:
+            self.status("Rien à annuler.")
+            return
+        last, self.history = self.history[-1], self.history[:-1]
+        self._set_poses({n: p for n, p in last.items() if self._find(n)})
+        self.status("Déplacement annulé.")
 
     def toggle_visible(self, number: int) -> None:
         cap = self._find(number)
@@ -480,6 +669,7 @@ class LidarScope:
             self.captures = [c for c in self.captures if c.number != number]
             self.map.draw_capture(number, None)
             self.selected = None if self.selected == number else self.selected
+            self.sel = self.sel - {number}
             self._refresh_capture_list()
             self.schedule_analysis()
 

@@ -3,6 +3,10 @@
     .venv/Scripts/python -m lidar.studio [session.lidar.json]      (ou double-clic sur LidarStudio.bat)
 
 Étapes : 1 Données · 2 Prétraitement · 3 Recalage · 4 Grid map · 5 Carte vectorielle · 6 Résultat
+
+Déplacer les scans (bouton ✋ actif) : clic = sélectionner, Ctrl + clic = ajouter à la sélection,
+glisser = déplacer, clic droit glissé = tourner autour du centre de la sélection, Ctrl + molette = 1°.
+Clavier : flèches = déplacer, A / E = tourner, Ctrl+A = tout sélectionner, Ctrl+Z = annuler.
 """
 
 from __future__ import annotations
@@ -16,8 +20,8 @@ import customtkinter as ctk
 import numpy as np
 
 from ..extraction import ExtractionParams, extraction_stages
-from ..geometry import Pose, local_to_global
-from ..matching import align_sequence, icp, nearest, voxel_downsample
+from ..geometry import Pose, move_rigid
+from ..matching import align_best, align_sequence, consistency, icp, refine_global, voxel_downsample
 from ..scan import Scan
 from ..segments import Segment
 from ..vectormap import load_vector_map
@@ -26,7 +30,7 @@ from ..scope.carto_panel import RESOLUTIONS
 from ..scope.export_dialog import ExportDialog
 from ..scope.exporter import export_bundle
 from ..scope.mapping import GridParams, MapParams, VectorParams, beam_image, build_maps
-from ..scope.mapview import MapView
+from ..scope.mapview import Editor, MapView
 from ..scope.processing import Filters
 from ..scope.render import render_png
 from ..scope.session import Capture, read_any, save_session
@@ -37,6 +41,7 @@ PALETTE = ["#2ecc71", "#e67e22", "#3498db", "#e84393", "#f1c40f", "#9b59b6", "#1
            "#00d2ff", "#ff9ff3", "#c8d6e5", "#feca57"]
 NUDGES = {"Fin": (0.01, 0.5), "Normal": (0.05, 2.0), "Gros": (0.20, 5.0)}
 LOW_OVERLAP = 0.30   # en dessous, le recalage ICP est jugé peu fiable
+HISTORY = 60         # nombre de retours en arrière possibles (Ctrl+Z)
 
 
 def _seg_button(master, values, value, command) -> ctk.CTkSegmentedButton:
@@ -60,7 +65,9 @@ class LidarStudio:
         self.originals: dict[int, Pose] = {}
         self.icp_info: dict[int, str] = {}
         self.reference: list[Segment] = []
-        self.selected: int | None = None
+        self.selected: int | None = None      # scan « principal » (ICP, étapes de la carte vectorielle)
+        self.sel: set[int] = set()            # tous les scans sélectionnés (déplacés / tournés ensemble)
+        self.history: list[dict[int, Pose]] = []
         self.step = 0
         self._job = None
 
@@ -80,6 +87,13 @@ class LidarStudio:
         ctk.CTkLabel(root, textvariable=self.status_var, font=font(11), text_color=T.MUTED, anchor="w").pack(
             fill="x", padx=16, pady=(0, 8))
         root.protocol("WM_DELETE_WINDOW", self.quit)
+        keys = {"<Left>": (-1, 0, 0), "<Right>": (1, 0, 0), "<Up>": (0, 1, 0), "<Down>": (0, -1, 0),
+                "a": (0, 0, 1), "e": (0, 0, -1)}
+        for key, d in keys.items():
+            root.bind(key, lambda ev, d=d: None if self._typing(ev) else self.nudge(*d))
+        root.bind("<Control-z>", lambda ev: self.undo())
+        root.bind("<Control-a>", lambda ev: None if self._typing(ev) else self.select_all())
+        self.map.set_editor(self._editor())
         self.go(0)
 
     # ================================================================== structure
@@ -134,6 +148,10 @@ class LidarStudio:
         button(tools, "⌖  Tout voir", self.fit_view, width=100).pack(side="right")
         self.ruler_btn = button(tools, "📏  Règle", self.toggle_ruler, width=90)
         self.ruler_btn.pack(side="right", padx=6)
+        button(tools, "↶  Annuler", self.undo, width=90).pack(side="right")
+        self.edit_btn = button(tools, "✋  Déplacer les scans : oui", self.toggle_edit, width=190,
+                               fg_color=T.ACCENT, text_color="#06120b", hover_color=T.ACCENT_HOVER)
+        self.edit_btn.pack(side="right", padx=6)
         holder = ctk.CTkFrame(card, fg_color=T.BG, corner_radius=8)
         holder.pack(fill="both", expand=True, padx=10)
         self.cursor_var = ctk.StringVar(value="")
@@ -142,6 +160,9 @@ class LidarStudio:
         bottom = ctk.CTkFrame(card, fg_color="transparent")
         bottom.pack(fill="x", padx=14, pady=(4, 8))
         ctk.CTkLabel(bottom, textvariable=self.cursor_var, font=font(11, mono=True), text_color=T.MUTED).pack(side="left")
+        ctk.CTkLabel(card, text="✋ glisser un scan = déplacer · clic droit glissé = tourner · Ctrl+clic = sélection "
+                     "multiple · Ctrl+molette = ±1° · flèches / A E au clavier · Ctrl+Z = annuler",
+                     font=font(10), text_color=T.MUTED).pack(anchor="w", padx=14, pady=(0, 6))
         self.legend = ctk.CTkLabel(bottom, text="", font=font(11), text_color=T.MUTED)
         self.legend.pack(side="right")
 
@@ -171,8 +192,12 @@ class LidarStudio:
     def _panel_data(self, p) -> None:
         row = ctk.CTkFrame(p, fg_color="transparent")
         row.pack(fill="x", pady=(0, 6))
-        button(row, "Tout cocher", lambda: self._set_all(True), width=110).pack(side="left")
-        button(row, "Tout décocher", lambda: self._set_all(False), width=110).pack(side="left", padx=6)
+        button(row, "Tout cocher", lambda: self._set_all(True), width=100).pack(side="left")
+        button(row, "Tout décocher", lambda: self._set_all(False), width=100).pack(side="left", padx=6)
+        button(row, "Tout sélect.", self.select_all, width=100).pack(side="left")
+        ctk.CTkLabel(p, text="Clic = sélectionner · Ctrl + clic = ajouter à la sélection (pour déplacer / tourner "
+                     "plusieurs scans ensemble)", font=font(10), text_color=T.MUTED, wraplength=360,
+                     justify="left").pack(anchor="w", pady=(0, 6))
         self.scan_list = ctk.CTkFrame(p, fg_color="transparent")
         self.scan_list.pack(fill="x")
 
@@ -198,9 +223,14 @@ class LidarStudio:
         self.filter_stats.pack(anchor="w", padx=12, pady=8)
 
     def _panel_align(self, p) -> None:
-        box = section(p, "Scan sélectionné")
-        self.sel_label = ctk.CTkLabel(box, text="Clique un scan à l'étape 1", font=font(13, "bold"), text_color=T.MUTED)
+        box = section(p, "Sélection (déplacée / tournée en bloc)")
+        self.sel_label = ctk.CTkLabel(box, text="Clique un scan sur la carte", font=font(13, "bold"),
+                                      text_color=T.MUTED, wraplength=360)
         self.sel_label.pack(pady=(10, 4))
+        rowb = ctk.CTkFrame(box, fg_color="transparent")
+        rowb.pack(pady=(0, 4))
+        button(rowb, "Tout sélectionner", self.select_all, width=140).pack(side="left", padx=3)
+        button(rowb, "Seulement le principal", self.select_primary_only, width=160).pack(side="left", padx=3)
         self.nudge_mode = _seg_button(box, list(NUDGES), "Normal", lambda: None)
         self.nudge_mode.pack(pady=4)
         pad = ctk.CTkFrame(box, fg_color="transparent")
@@ -211,10 +241,17 @@ class LidarStudio:
         self.pose_entry = PoseEntry(box)
         self.pose_entry.pack(padx=10, pady=6)
         button(box, "Appliquer cette pose", self.apply_pose).pack(fill="x", padx=12, pady=(0, 10))
-        box = section(p, "Recalage automatique (ICP)")
-        button(box, "🎯  Recaler la sélection sur les autres", self.icp_selected, primary=True).pack(
-            fill="x", padx=12, pady=(12, 4))
-        button(box, "🧩  Tout recaler (ancre = sélection)", self.icp_all).pack(fill="x", padx=12, pady=4)
+        box = section(p, "Recalage automatique")
+        button(box, "⚡  Recalage complet (le meilleur des deux)", self.align_full, primary=True).pack(
+            fill="x", padx=12, pady=(12, 2))
+        ctk.CTkLabel(box, text="Toutes les poses corrigées ENSEMBLE (ICP point à droite), en partant soit des poses "
+                     "actuelles, soit de l'ICP scan par scan : on garde le départ qui donne la carte la plus "
+                     "cohérente. Ancre = scan principal.", font=font(10),
+                     text_color=T.MUTED, wraplength=350, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
+        button(box, "🎯  Recaler la sélection (en bloc) sur les autres", self.icp_selected).pack(
+            fill="x", padx=12, pady=4)
+        button(box, "🧩  ICP scan par scan (ancre = principal)", self.icp_all).pack(fill="x", padx=12, pady=4)
+        button(box, "🚀  Optimisation globale seule", self.optimize_global).pack(fill="x", padx=12, pady=4)
         button(box, "↺  Revenir aux poses d'origine", self.reset_poses).pack(fill="x", padx=12, pady=(4, 6))
         button(box, "📏  Mesurer la cohérence des scans", self.measure).pack(fill="x", padx=12, pady=(0, 12))
         box = section(p, "Résultats")
@@ -346,15 +383,18 @@ class LidarStudio:
     def _pts(self, cap: Capture) -> np.ndarray:
         return self.filters().apply(cap.scan).global_points()
 
+    def _local(self, cap: Capture) -> np.ndarray:
+        return self.filters().apply(cap.scan).local_points()
+
     def _poses(self, caps) -> list[tuple]:
-        return [(c.scan.pose, c.color, c.number == self.selected) for c in caps]
+        return [(c.scan.pose, c.color, c.number in self.sel, c.number) for c in caps]
 
     # ------------------------------------------------------------------ rendus par étape
     def _render_data(self) -> None:
         caps = self.included()
         self.map.draw_analysis(None, None, [], [], None)
-        self.map.draw_overlay([(c.scan.filtered().global_points(), c.color, 9 if c.number == self.selected else 4, "o")
-                               for c in caps], [], self._poses(caps))
+        self.map.draw_overlay([(c.scan.filtered().global_points(), c.color, 9 if c.number in self.sel else 4, "o",
+                                c.number) for c in caps], [], self._poses(caps))
         self.legend.configure(text="une couleur par scan · ▲ = pose du robot (contour blanc = sélection)")
 
     def _render_filters(self) -> None:
@@ -363,7 +403,7 @@ class LidarStudio:
         for c in caps:
             raw = c.scan.filtered(0.0001, 1e9, 0)                    # tous les points avec écho
             k = f.apply(c.scan)
-            kept.append((k.global_points(), c.color, 4, "o"))
+            kept.append((k.global_points(), c.color, 4, "o", c.number))
             out_range = raw.ranges_m < f.min_range_m
             out_range |= raw.ranges_m > f.max_range_m
             out_range |= raw.intensities < f.min_intensity          # NaN -> False
@@ -387,8 +427,8 @@ class LidarStudio:
     def _render_align(self) -> None:
         caps = self.included()
         self.map.draw_analysis(None, None, [], [], None)
-        self.map.draw_overlay([(self._pts(c), c.color, 10 if c.number == self.selected else 3, "o") for c in caps],
-                              [], self._poses(caps))
+        self.map.draw_overlay([(self._pts(c), c.color, 9 if c.number in self.sel else 3, "o", c.number)
+                               for c in caps], [], self._poses(caps))
         lines = [f"{c.title:<10s} {self.icp_info.get(c.number, '—')}" for c in caps]
         self.align_text.configure(text="\n".join(lines) or "—")
         self.legend.configure(text="gros points = scan sélectionné · « ⚠ » = recouvrement faible, à vérifier")
@@ -407,7 +447,7 @@ class LidarStudio:
         params = self.params(vector=False)
         res = build_maps([c.scan for c in caps[:k]], params)
         beams = beam_image(caps[k - 1].scan, params) if self.g_beams.get() else None
-        pts = [(self._pts(c), c.color, 3, "o") for c in caps[:k]] if self.g_points.get() else []
+        pts = [(self._pts(c), c.color, 3, "o", c.number) for c in caps[:k]] if self.g_points.get() else []
         self.map.draw_analysis(res.grid_image(params.grid.model), res.grid.extent() if res.grid else None, [], [], beams)
         self.map.draw_overlay(pts, [], self._poses(caps[:k]))
         g = res.stats.get("grid", {})
@@ -423,7 +463,7 @@ class LidarStudio:
         self.map.draw_analysis(None, None, [], [], None)
         if stage == "Carte":
             res = build_maps([c.scan for c in caps], self.params(grid=False))
-            faint = [(self._pts(c), "#3d4654", 3, "o") for c in caps]
+            faint = [(self._pts(c), "#3d4654", 3, "o", c.number) for c in caps]
             self.map.draw_overlay(faint, [(res.segments, "#ff6b6b", 2.6)], self._poses(caps))
             v = res.stats.get("vector", {})
             self.vec_stats.configure(text=f"Scans           {len(caps)}\nSegments        {v.get('segments', 0)}\n"
@@ -465,7 +505,7 @@ class LidarStudio:
         img = res.grid_image(params.grid.model)
         ref = self.reference if self.r_ref.get() else []
         self.map.draw_analysis(img, res.grid.extent() if res.grid else None, [], ref, None)
-        pts = [(self._pts(c), c.color, 3, "o") for c in caps] if self.r_pts.get() else []
+        pts = [(self._pts(c), c.color, 3, "o", c.number) for c in caps] if self.r_pts.get() else []
         poses = self._poses(caps) if self.r_poses.get() else []
         self.map.draw_overlay(pts, [(res.segments, "#ff6b6b", 2.4)], poses)
         st = res.stats
@@ -497,6 +537,7 @@ class LidarStudio:
                 messagebox.showerror("Ouvrir", f"{Path(path).name} :\n{exc}")
         if added:
             self.selected = self.selected or self.captures[0].number
+            self.sel = self.sel or {self.selected}
             self.status(f"{added} scan(s) chargé(s).")
             self._refresh_list()
             self.render()
@@ -507,8 +548,9 @@ class LidarStudio:
             w.destroy()
         self.count_label.configure(text=f"{len(self.included())} / {len(self.captures)} scans utilisés")
         for cap in self.captures:
-            sel = cap.number == self.selected
-            row = ctk.CTkFrame(self.scan_list, fg_color=T.SURFACE_2, corner_radius=10, border_width=2,
+            sel = cap.number in self.sel
+            row = ctk.CTkFrame(self.scan_list, fg_color=T.SURFACE_2, corner_radius=10,
+                               border_width=3 if cap.number == self.selected else 2,
                                border_color=cap.color if sel else T.SURFACE_2)
             row.pack(fill="x", pady=3)
             var = ctk.BooleanVar(value=cap.visible)
@@ -523,6 +565,7 @@ class LidarStudio:
                          font=font(10, mono=True), text_color=T.MUTED, anchor="w").pack(fill="x")
             for w in (row, info, *info.winfo_children()):
                 w.bind("<Button-1>", lambda e, n=cap.number: self.select(n))
+                w.bind("<Control-Button-1>", lambda e, n=cap.number: self.select(n, additive=True))
 
     def _toggle(self, number: int, on: bool) -> None:
         self.captures = [replace(c, visible=on) if c.number == number else c for c in self.captures]
@@ -537,32 +580,109 @@ class LidarStudio:
     def _find(self, number) -> Capture | None:
         return next((c for c in self.captures if c.number == number), None)
 
-    def select(self, number: int) -> None:
+    def select(self, number: int, additive: bool = False) -> None:
+        """Clic : ce scan seul. Ctrl + clic : l'ajouter à la sélection (ou l'en retirer)."""
         cap = self._find(number)
         if not cap:
             return
-        self.selected = number
+        if additive and number in self.sel and len(self.sel) > 1:
+            self.sel = self.sel - {number}
+            if self.selected == number:
+                self.selected = min(self.sel)
+        else:
+            self.sel = (self.sel | {number}) if additive else {number}
+            self.selected = number
+        self._show_selection()
+        self._refresh_list()
+        self._later()
+
+    def select_all(self) -> None:
+        caps = self.included()
+        if caps:
+            self.sel = {c.number for c in caps}
+            self.selected = self.selected if self.selected in self.sel else caps[0].number
+            self._show_selection()
+            self._refresh_list()
+            self._later()
+
+    def select_primary_only(self) -> None:
+        if self.selected is not None:
+            self.select(self.selected)
+
+    def _show_selection(self) -> None:
+        cap = self._find(self.selected)
+        if cap is None:
+            return
         p = cap.scan.pose
         self.pose_entry.set(p.x, p.y, p.theta_deg)
-        self.sel_label.configure(text=f"● {cap.title}", text_color=cap.color)
-        self._refresh_list()
-        self._later()
+        extra = f"  + {len(self.sel) - 1} autre(s)" if len(self.sel) > 1 else ""
+        self.sel_label.configure(text=f"● {cap.title}{extra}", text_color=cap.color)
+
+    # ------------------------------------------------------------------ souris sur la carte
+    def _editor(self) -> Editor:
+        return Editor(pick=self._pick, selection=lambda: self.sel, select=self.select,
+                      pivot=self._pivot, commit=self._commit_move)
+
+    def _pick(self, x: float, y: float, tol: float) -> int | None:
+        """Scan dont un point (ou la pose) est le plus proche du clic, à moins de tol mètres."""
+        best, best_d = None, tol
+        click = np.array([x, y])
+        for c in self.included():
+            pose = np.array([[c.scan.pose.x, c.scan.pose.y]])
+            pts = np.vstack([self._pts(c), pose])
+            d = float(np.min(np.hypot(*(pts - click).T)))
+            if d < best_d or (d == best_d and c.number in self.sel):
+                best, best_d = c.number, d
+        return best
+
+    def _pivot(self, keys) -> tuple[float, float]:
+        poses = [c.scan.pose for c in self.captures if c.number in keys]
+        return (float(np.mean([p.x for p in poses])), float(np.mean([p.y for p in poses]))) if poses else (0.0, 0.0)
+
+    def _commit_move(self, keys, dx: float, dy: float, dth: float, pivot) -> None:
+        moves = {c.number: move_rigid(c.scan.pose, dx, dy, dth, pivot) for c in self.captures if c.number in keys}
+        self._set_poses(moves, "manuel")
+
+    def toggle_edit(self) -> None:
+        on = self.map.editor is None
+        self.map.set_editor(self._editor() if on else None)
+        self.edit_btn.configure(text=f"✋  Déplacer les scans : {'oui' if on else 'non'}",
+                                fg_color=T.ACCENT if on else T.SURFACE_2, text_color="#06120b" if on else T.INK)
+        self.status("Glisse un scan pour le déplacer, clic droit glissé pour le tourner." if on else
+                    "Déplacement des scans coupé : glisser déplace seulement la vue.")
 
     # ================================================================== recalage
-    def _set_pose(self, number: int, pose: Pose, info: str | None = None) -> None:
-        self.captures = [replace(c, scan=c.scan.with_pose(pose)) if c.number == number else c for c in self.captures]
-        if info is not None:
-            self.icp_info[number] = info
-        if number == self.selected:
-            self.pose_entry.set(pose.x, pose.y, pose.theta_deg)
+    def _set_poses(self, poses: dict[int, Pose], info: str | dict | None = None, remember: bool = True) -> None:
+        """Change plusieurs poses d'un coup (un seul rafraîchissement) ; info = texte commun ou par scan."""
+        if not poses:
+            return
+        if remember:
+            self.history = (self.history + [{c.number: c.scan.pose for c in self.captures}])[-HISTORY:]
+        self.captures = [replace(c, scan=c.scan.with_pose(poses[c.number])) if c.number in poses else c
+                         for c in self.captures]
+        for n in poses:
+            text = info.get(n) if isinstance(info, dict) else info
+            if text is not None:
+                self.icp_info[n] = text
+        self._show_selection()
         self._refresh_list()
         self._later()
 
+    def undo(self) -> None:
+        if not self.history:
+            self.status("Rien à annuler.")
+            return
+        last, self.history = self.history[-1], self.history[:-1]
+        self._set_poses({n: p for n, p in last.items() if self._find(n)}, remember=False)
+        self.status(f"Annulé (encore {len(self.history)} retour(s) possible(s)).")
+
     def nudge(self, dx, dy, dth) -> None:
-        cap = self._find(self.selected)
-        if cap:
-            m, d = NUDGES[self.nudge_mode.get()]
-            self._set_pose(cap.number, cap.scan.pose.moved(dx * m, dy * m, dth * d), "manuel")
+        """Flèches / boutons : déplace ou tourne TOUTE la sélection (rotation autour de son centre)."""
+        if not self.sel:
+            return
+        m, d = NUDGES[self.nudge_mode.get()]
+        pivot = self._pivot(self.sel)
+        self._commit_move(set(self.sel), dx * m, dy * m, dth * d, pivot)
 
     def apply_pose(self) -> None:
         cap = self._find(self.selected)
@@ -572,7 +692,7 @@ class LidarStudio:
             messagebox.showwarning("Pose", "x, y et θ doivent être des nombres.")
             return
         if cap:
-            self._set_pose(cap.number, pose, "manuel")
+            self._set_poses({cap.number: pose}, "manuel")
 
     @staticmethod
     def _describe(res, before: Pose) -> str:
@@ -584,50 +704,93 @@ class LidarStudio:
                 f"Δ({p.x - before.x:+.2f},{p.y - before.y:+.2f},{p.theta_deg - before.theta_deg:+.1f}°)")
 
     def icp_selected(self) -> None:
-        cap = self._find(self.selected)
-        others = [c for c in self.included() if c.number != self.selected]
-        if not cap or not others:
-            messagebox.showinfo("ICP", "Il faut un scan sélectionné et au moins un autre scan coché.")
+        """Recale la sélection EN BLOC (ses scans gardent leur placement relatif) sur les autres scans."""
+        group = [c for c in self.included() if c.number in self.sel]
+        others = [c for c in self.included() if c.number not in self.sel]
+        if not group or not others:
+            messagebox.showinfo("ICP", "Il faut au moins un scan sélectionné et un autre scan coché, non sélectionné.")
             return
         ref = voxel_downsample(np.vstack([self._pts(c) for c in others]), 0.03)
-        res = icp(self.filters().apply(cap.scan).local_points(), cap.scan.pose, ref)
+        block = voxel_downsample(np.vstack([self._pts(c) for c in group]), 0.02)
+        res = icp(block, Pose(), ref)                 # points déjà dans la carte : pose initiale = identité
+        names = ", ".join(c.title for c in group)
+        if not res.converged:
+            self.status(f"ICP impossible pour {names} (pas assez de points communs).")
+            return
         if res.inlier_ratio < LOW_OVERLAP and not messagebox.askyesno(
-                "Recouvrement faible", f"Seulement {res.inlier_ratio:.0%} des points de {cap.title} retrouvent un "
+                "Recouvrement faible", f"Seulement {res.inlier_ratio:.0%} des points de {names} retrouvent un "
                 "voisin : le recalage est peu fiable. L'appliquer quand même ?"):
             return
-        self._set_pose(cap.number, res.pose, self._describe(res, cap.scan.pose))
-        self.status(f"{cap.title} recalé : erreur résiduelle {res.rms_m * 100:.1f} cm.")
+        t = res.pose
+        moves = {c.number: move_rigid(c.scan.pose, t.x, t.y, t.theta_deg, (0.0, 0.0)) for c in group}
+        self._set_poses(moves, f"ICP bloc rms {res.rms_m * 100:4.1f}cm rec.{res.inlier_ratio:4.0%} "
+                               f"Δ({t.x:+.2f},{t.y:+.2f},{t.theta_deg:+.1f}°)")
+        self.status(f"{names} recalé(s) en bloc : erreur résiduelle {res.rms_m * 100:.1f} cm.")
+
+    def _anchor(self, caps) -> int:
+        return next((i for i, c in enumerate(caps) if c.number == self.selected), 0)
 
     def icp_all(self) -> None:
         caps = self.included()
-        anchor = next((i for i, c in enumerate(caps) if c.number == self.selected), 0)
         if len(caps) < 2:
             return
-        self.status(f"Recalage de {len(caps) - 1} scans sur {caps[anchor].title}… (quelques secondes)")
+        anchor = self._anchor(caps)
+        self.status(f"Recalage de {len(caps) - 1} scans sur {caps[anchor].title}…")
         self.root.update_idletasks()
-        f = self.filters()
-        out = align_sequence([f.apply(c.scan).local_points() for c in caps], [c.scan.pose for c in caps], anchor)
-        for c, (pose, res) in zip(caps, out):
-            self._set_pose(c.number, pose, "ancre (fixe)" if res is None else self._describe(res, c.scan.pose))
+        out = align_sequence([self._local(c) for c in caps], [c.scan.pose for c in caps], anchor)
+        self._set_poses({c.number: pose for c, (pose, _) in zip(caps, out)},
+                        {c.number: "ancre (fixe)" if res is None else self._describe(res, c.scan.pose)
+                         for c, (_, res) in zip(caps, out)})
         weak = [c.title for c, (_, r) in zip(caps, out) if r is not None and r.inlier_ratio < LOW_OVERLAP]
-        self.status("Recalage terminé." + (f" À vérifier (recouvrement faible) : {', '.join(weak)}." if weak else ""))
+        self.status("ICP scan par scan terminé." + (f" À vérifier (recouvrement faible) : {', '.join(weak)}."
+                                                    if weak else ""))
+
+    def optimize_global(self, quiet: bool = False) -> None:
+        """Toutes les poses corrigées ensemble (matching.refine_global)."""
+        caps = self.included()
+        if len(caps) < 2:
+            return
+        anchor = self._anchor(caps)
+        self.status("Optimisation globale des poses…")
+        self.root.update_idletasks()
+        res = refine_global([self._local(c) for c in caps], [c.scan.pose for c in caps], anchor)
+        self._set_poses({c.number: p for c, p in zip(caps, res.poses)},
+                        {c.number: "ancre (fixe)" if k == anchor else
+                         f"global : écart {b * 100:4.1f} → {a * 100:4.1f} cm"
+                         for k, (c, b, a) in enumerate(zip(caps, res.gap_before_m, res.gap_after_m))})
+        if not quiet:
+            self.status(f"Optimisation globale : écart médian entre scans {res.median_before * 100:.1f} → "
+                        f"{res.median_after * 100:.1f} cm ({res.iterations} itérations). Ctrl+Z pour annuler.")
+        return res
+
+    def align_full(self) -> None:
+        """Le recalage « boosté » : optimisation globale depuis deux départs, on garde le meilleur."""
+        caps = self.included()
+        if len(caps) < 2:
+            return
+        anchor = self._anchor(caps)
+        self.status("Recalage complet : deux départs essayés, puis optimisation globale…")
+        self.root.update_idletasks()
+        res, how = align_best([self._local(c) for c in caps], [c.scan.pose for c in caps], anchor)
+        self._set_poses({c.number: p for c, p in zip(caps, res.poses)},
+                        {c.number: "ancre (fixe)" if k == anchor else
+                         f"complet : écart {b * 100:4.1f} → {a * 100:4.1f} cm"
+                         for k, (c, b, a) in enumerate(zip(caps, res.gap_before_m, res.gap_after_m))})
+        self.status(f"Recalage complet ({how}) : écart médian entre scans {res.median_before * 100:.1f} → "
+                    f"{res.median_after * 100:.1f} cm. Ctrl+Z pour revenir en arrière.")
 
     def reset_poses(self) -> None:
-        for c in self.captures:
-            self._set_pose(c.number, self.originals[c.number], "—")
-        self.status("Poses d'origine restaurées.")
+        self._set_poses({c.number: self.originals[c.number] for c in self.captures}, "—")
+        self.status("Poses d'origine restaurées (Ctrl+Z pour annuler).")
 
     def measure(self) -> None:
         caps = self.included()
         if len(caps) < 2:
             return
-        pts = [self._pts(c) for c in caps]
-        med = []
-        for k in range(len(caps)):
-            others = voxel_downsample(np.vstack([p for j, p in enumerate(pts) if j != k]), 0.02)
-            med.append(float(np.median(nearest(pts[k], others)[1])))
-        self.status(f"Cohérence : écart médian entre chaque scan et les autres = {np.median(med) * 100:.1f} cm "
-                    f"(pire : {max(med) * 100:.1f} cm, {caps[int(np.argmax(med))].title}).")
+        med = consistency([self._local(c) for c in caps], [c.scan.pose for c in caps])
+        k = int(np.nanargmax(med))
+        self.status(f"Cohérence : écart médian entre chaque scan et les autres = {np.nanmedian(med) * 100:.1f} cm "
+                    f"(pire : {med[k] * 100:.1f} cm, {caps[k].title}).")
 
     # ================================================================== sorties
     def import_reference(self) -> None:
@@ -684,6 +847,10 @@ class LidarStudio:
 
     def status(self, text: str) -> None:
         self.status_var.set(text)
+
+    @staticmethod
+    def _typing(event) -> bool:
+        return "entry" in str(event.widget).lower()
 
     def quit(self) -> None:
         if self._job:

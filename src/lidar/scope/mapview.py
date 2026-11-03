@@ -1,16 +1,26 @@
 """La grande carte centrale : couches d'affichage + interactions souris.
 
-Souris : molette = zoom autour du curseur ; clic gauche glissé = déplacer la vue ;
+Souris : molette = zoom autour du curseur ; clic gauche glissé dans le vide = déplacer la vue ;
 mode règle : deux clics = distance et angle entre deux points.
+
+Mode « déplacer les scans » (set_editor) :
+  clic sur un scan            = le sélectionner (Ctrl + clic : l'ajouter / l'enlever de la sélection)
+  glisser un scan             = déplacer la sélection
+  clic droit glissé           = tourner la sélection autour de son centre (Maj + glisser : pareil)
+  Ctrl + molette              = tourner la sélection de 1° (Maj : 5°)
+Pendant le geste, les points sont seulement redessinés avec une transformation (rien n'est recalculé) :
+le mouvement reste fluide même avec des milliers de points. Le calcul est fait au relâchement.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from matplotlib.transforms import Affine2D
 
 from ..geometry import Pose
 from ..scan import Scan
@@ -18,6 +28,25 @@ from ..segments import Segment
 from . import theme as T
 
 ZOOM_STEP = 1.2
+PICK_PX = 14          # un clic à moins de 14 pixels d'un point « touche » ce scan
+ROTATE_MIN_PX = 60    # clic de rotation plus près du centre que ça : rotation au déplacement horizontal
+DEG_PER_PX = 0.4      # ... à raison de 0,4° par pixel
+
+
+def _held(ev, modifier: str) -> bool:
+    """Touche de modification enfoncée pendant un événement souris (« ctrl », « shift »)."""
+    key = (ev.key or "").replace("control", "ctrl")
+    return modifier in key.split("+")
+
+
+@dataclass
+class Editor:
+    """Ce que l'application fournit pour qu'on puisse déplacer ses scans à la souris."""
+    pick: Callable[[float, float, float], object]           # (x, y, tolérance m) -> clé du scan ou None
+    selection: Callable[[], set]                            # clés sélectionnées
+    select: Callable[[object, bool], None]                  # (clé, ajouter ?) -> met à jour la sélection
+    pivot: Callable[[set], tuple[float, float]]             # centre de rotation d'un groupe
+    commit: Callable[[set, float, float, float, tuple], None]   # (clés, dx, dy, dθ°, pivot)
 
 
 class MapView:
@@ -52,7 +81,14 @@ class MapView:
         self.ruler_mode = False
         self._ruler_pts: list[tuple[float, float]] = []
         self._drag = None
+        self._gesture = None
+        self.editor: Editor | None = None
+        self.movable: dict[object, list] = {}      # clé de scan -> artistes à transformer pendant un geste
         self.robot_pose = Pose()
+        self.gesture_text = self.ax.text(0.01, 0.99, "", transform=self.ax.transAxes, va="top", ha="left",
+                                         color=T.WARN, fontsize=11, zorder=9, family=T.MONO,
+                                         bbox=dict(facecolor=T.SURFACE, edgecolor=T.WARN, boxstyle="round,pad=0.4"))
+        self.gesture_text.set_visible(False)
         for name, cb in (("scroll_event", self._on_scroll), ("button_press_event", self._on_press),
                          ("button_release_event", self._on_release), ("motion_notify_event", self._on_motion)):
             self.canvas.mpl_connect(name, cb)
@@ -99,6 +135,7 @@ class MapView:
             arts += self.ax.plot([p.x, p.x + 0.25 * np.cos(p.theta)], [p.y, p.y + 0.25 * np.sin(p.theta)],
                                  "-", color=color, lw=2, zorder=6)
         self.capture_arts[number] = arts
+        self.movable[number] = arts
         self.redraw()
 
     def draw_analysis(self, image: np.ndarray | None, extent, segments: list[Segment],
@@ -123,25 +160,34 @@ class MapView:
         self.redraw()
 
     def draw_overlay(self, points: list[tuple], segments: list[tuple], poses: list[tuple] = ()) -> None:
-        """Couche libre : points = [(xy, couleur, taille, marqueur)], segments = [(liste, couleur, épaisseur)],
-        poses = [(Pose, couleur, en_avant)]. Remplace la couche précédente."""
+        """Couche libre : points = [(xy, couleur, taille, marqueur[, clé])], segments = [(liste, couleur, épaisseur)],
+        poses = [(Pose, couleur, en_avant[, clé])]. Remplace la couche précédente.
+        La clé (facultative) rattache des points / une pose à un scan déplaçable à la souris."""
         for art in getattr(self, "overlay_arts", []):
             art.remove()
         self.overlay_arts = []
-        for xy, color, size, marker in points:
+        self.movable = {k: v for k, v in self.movable.items() if k in self.capture_arts}
+        for item in points:
+            xy, color, size, marker = item[:4]
             if len(xy):
-                self.overlay_arts.append(self.ax.scatter(xy[:, 0], xy[:, 1], s=size, c=color, marker=marker,
-                                                         linewidths=0 if marker != "x" else 1.2, zorder=3))
+                art = self.ax.scatter(xy[:, 0], xy[:, 1], s=size, c=color, marker=marker,
+                                      linewidths=0 if marker != "x" else 1.2, zorder=3)
+                self.overlay_arts.append(art)
+                if len(item) > 4:
+                    self.movable.setdefault(item[4], []).append(art)
         for segs, color, lw in segments:
             for sg in segs:
                 self.overlay_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color=color, lw=lw,
                                                   zorder=5, solid_capstyle="round")
-        for pose, color, strong in poses:
-            self.overlay_arts += self.ax.plot(pose.x, pose.y, "^", color=color, ms=13 if strong else 9,
-                                              mec="#fff" if strong else "#000", mew=1.5 if strong else 1, zorder=6)
-            self.overlay_arts += self.ax.plot([pose.x, pose.x + 0.3 * np.cos(pose.theta)],
-                                              [pose.y, pose.y + 0.3 * np.sin(pose.theta)], "-", color=color,
-                                              lw=2, zorder=6)
+        for item in poses:
+            pose, color, strong = item[:3]
+            arts = self.ax.plot(pose.x, pose.y, "^", color=color, ms=13 if strong else 9,
+                                mec="#fff" if strong else "#000", mew=1.5 if strong else 1, zorder=6)
+            arts += self.ax.plot([pose.x, pose.x + 0.3 * np.cos(pose.theta)],
+                                 [pose.y, pose.y + 0.3 * np.sin(pose.theta)], "-", color=color, lw=2, zorder=6)
+            self.overlay_arts += arts
+            if len(item) > 3:
+                self.movable.setdefault(item[3], []).extend(arts)
         self.redraw()
 
     def fit(self, points: np.ndarray, margin: float = 0.5) -> None:
@@ -173,9 +219,87 @@ class MapView:
             self.ruler_text.set_visible(False)
             self.redraw()
 
+    # ------------------------------------------------------------------ déplacement des scans
+    def set_editor(self, editor: Editor | None) -> None:
+        """Active (editor fourni) ou coupe le déplacement des scans à la souris."""
+        self.editor = editor
+        self._gesture = None
+        self.gesture_text.set_visible(False)
+        self.redraw()
+
+    def pixel_size(self) -> float:
+        """Taille d'un pixel écran en mètres (pour la tolérance d'un clic)."""
+        x0, x1 = self.ax.get_xlim()
+        return abs(x1 - x0) / max(self.ax.bbox.width, 1)
+
+    def _start_gesture(self, ev, rotate: bool) -> bool:
+        ed = self.editor
+        key = ed.pick(ev.xdata, ev.ydata, PICK_PX * self.pixel_size())
+        if key is None:
+            if rotate and ed.selection():           # clic droit dans le vide : tourne quand même la sélection
+                key = next(iter(ed.selection()))
+            else:
+                return False
+        additive = _held(ev, "ctrl")
+        if additive:
+            ed.select(key, True)
+            return True                              # Ctrl + clic : on ne fait que (dé)sélectionner
+        if key not in ed.selection():
+            ed.select(key, False)
+        keys = set(ed.selection())
+        self._gesture = dict(keys=keys, rotate=rotate, x0=ev.xdata, y0=ev.ydata, pivot=ed.pivot(keys),
+                             dx=0.0, dy=0.0, dth=0.0)
+        return True
+
+    def _apply_gesture(self, ev) -> None:
+        g = self._gesture
+        if g["rotate"]:
+            cx, cy = g["pivot"]
+            if np.hypot(g["x0"] - cx, g["y0"] - cy) < ROTATE_MIN_PX * self.pixel_size():
+                # clic trop près du centre : l'angle serait instable -> on tourne avec le déplacement horizontal
+                g["dth"] = float((ev.xdata - g["x0"]) / self.pixel_size() * DEG_PER_PX)
+            else:
+                a0 = np.arctan2(g["y0"] - cy, g["x0"] - cx)
+                a1 = np.arctan2(ev.ydata - cy, ev.xdata - cx)
+                g["dth"] = float(np.degrees((a1 - a0 + np.pi) % (2 * np.pi) - np.pi))
+            aff = Affine2D().rotate_deg_around(cx, cy, g["dth"])
+            label = f"rotation  {g['dth']:+.1f}°  autour de ({cx:.2f}, {cy:.2f})"
+        else:
+            g["dx"], g["dy"] = ev.xdata - g["x0"], ev.ydata - g["y0"]
+            aff = Affine2D().translate(g["dx"], g["dy"])
+            label = f"déplacement  Δx {g['dx']:+.3f} m   Δy {g['dy']:+.3f} m"
+        n = len(g["keys"])
+        self.gesture_text.set_text(f"{label}   ({n} scan{'s' if n > 1 else ''})")
+        self.gesture_text.set_visible(True)
+        self._transform_movable(g["keys"], aff)
+        self.redraw()
+
+    def _transform_movable(self, keys, aff: Affine2D | None) -> None:
+        t = self.ax.transData if aff is None else aff + self.ax.transData
+        for k in keys:
+            for art in self.movable.get(k, []):
+                if hasattr(art, "set_offset_transform"):       # nuage de points (scatter)
+                    art.set_offset_transform(t)
+                else:                                          # ligne, marqueur de pose
+                    art.set_transform(t)
+
+    def _end_gesture(self) -> None:
+        g, self._gesture = self._gesture, None
+        self.gesture_text.set_visible(False)
+        self._transform_movable(g["keys"], None)
+        if g["dx"] or g["dy"] or g["dth"]:
+            self.editor.commit(g["keys"], g["dx"], g["dy"], g["dth"], g["pivot"])
+        else:
+            self.redraw()
+
     # ------------------------------------------------------------------ souris
     def _on_scroll(self, ev) -> None:
         if ev.xdata is None:
+            return
+        if self.editor is not None and _held(ev, "ctrl") and self.editor.selection():
+            keys = set(self.editor.selection())
+            step = 5.0 if _held(ev, "shift") else 1.0
+            self.editor.commit(keys, 0.0, 0.0, step if ev.button == "up" else -step, self.editor.pivot(keys))
             return
         f = 1 / ZOOM_STEP if ev.button == "up" else ZOOM_STEP
         x0, x1 = self.ax.get_xlim()
@@ -185,17 +309,27 @@ class MapView:
         self.redraw()
 
     def _on_press(self, ev) -> None:
-        if ev.xdata is None or ev.button != 1:
+        if ev.xdata is None or ev.button not in (1, 3):
             return
-        if self.ruler_mode:
+        if self.ruler_mode and ev.button == 1:
             self._ruler_click(ev.xdata, ev.ydata)
-        else:
+            return
+        if self.editor is not None:
+            rotate = ev.button == 3 or _held(ev, "shift")
+            if self._start_gesture(ev, rotate):
+                return
+        if ev.button == 1:
             self._drag = (ev.x, ev.y, self.ax.get_xlim(), self.ax.get_ylim())
 
     def _on_release(self, _ev) -> None:
         self._drag = None
+        if self._gesture is not None:
+            self._end_gesture()
 
     def _on_motion(self, ev) -> None:
+        if self._gesture is not None and ev.xdata is not None:
+            self._apply_gesture(ev)
+            return
         if self._drag is not None and ev.x is not None:
             x, y, (xa, xb), (ya, yb) = self._drag
             bbox = self.ax.bbox
