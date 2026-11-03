@@ -57,3 +57,8 @@ def test_segment_map_distance_and_feet():
 
 def test_pose_error_wraps_angles():
     assert pose_error(Pose(0, 0, 359), Pose(0, 0, 1)) == (0.0, pytest.approx(2.0))
+
+
+def test_missing_reference_is_reported():
+    with pytest.raises(ValueError):
+        localize("scans · ICP point à point", np.zeros((20, 2)), Pose(), References())

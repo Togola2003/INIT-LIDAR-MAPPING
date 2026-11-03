@@ -17,6 +17,7 @@ from ..scan import Scan
 from ..segments import Segment
 from ..vectormap import VectorMapParams, build_vector_map
 from . import grid as G
+from . import scans as S
 from . import vector as V
 from .common import LocResult, pose_error
 
@@ -29,6 +30,8 @@ class References:
     segmap: V.SegmentMap | None = None
     seg_field: G.LikelihoodField | None = None
     seg_pyramid: dict | None = None
+    scan_ref: S.ScanReference | None = None
+    scan_field: G.LikelihoodField | None = None
 
     @staticmethod
     def build(map_scans: list[Scan] | None = None, segments: list[Segment] | None = None,
@@ -49,6 +52,9 @@ class References:
             kw["segmap"] = V.SegmentMap.from_segments(segments)
             kw["seg_field"] = G.LikelihoodField.from_points(kw["segmap"].sample(), resolution)
             kw["seg_pyramid"] = G.build_pyramid(kw["seg_field"])
+        if reference_points is not None and len(reference_points):
+            kw["scan_ref"] = S.ScanReference.from_points(reference_points)
+            kw["scan_field"] = G.LikelihoodField.from_points(kw["scan_ref"].points, resolution)
         return References(**kw)
 
 
@@ -66,6 +72,10 @@ METHODS: dict[str, tuple[str, Method]] = {
     "vecteur · calcul direct": ("segmap", lambda p, i, r: V.direct(p, i, r.segmap)),
     "vecteur · multi-résolution + Gauss-Newton": ("segmap", lambda p, i, r: V.multiresolution_gauss_newton(
         p, i, r.segmap, r.seg_field, r.seg_pyramid)),
+    "scans · ICP point à point": ("scan_ref", lambda p, i, r: S.icp_point_to_point(p, i, r.scan_ref)),
+    "scans · ICP point à droite": ("scan_ref", lambda p, i, r: S.icp_point_to_line(p, i, r.scan_ref)),
+    "scans · multi-résolution + ICP": ("scan_ref", lambda p, i, r: S.multiresolution_icp(
+        p, i, r.scan_ref, r.scan_field)),
 }
 
 
