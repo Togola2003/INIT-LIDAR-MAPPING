@@ -45,7 +45,7 @@ Une fenêtre, trois zones :
 | 2 Nettoyer | filtres du cours (portée, intensité, points isolés). Suppr = supprimer les scans sélectionnés |
 | 3 Recaler | glisser = déplacer, clic droit glissé = tourner, flèches / A E, plusieurs scans en bloc. **Recalage complet**, ICP en bloc, cohérence |
 | 4 Cartes | grid map et carte vectorielle, **retouches comprises**. **✓ Valider cette carte comme référence** : elle est figée et sert à la localisation |
-| 5 Localiser | **Scan de la liste** : un clic sur un scan dans la liste à gauche le localise aussitôt sur la carte de référence (recherche globale, sans pose de départ), gris = pose connue, vert = replacé. **Fichier importé** : un scan hors projet. **Robot en direct** : Wi-Fi, câble ou démo, suivi en temps réel + pilotage. Avancé : référence, méthode, comparaison, pose de départ, contrôle sans le scan |
+| 5 Localiser | la carte validée reste **fixe**. **Scan de la liste** ou **fichier importé** : le scan devient un scan libre (orange) qu'on **glisse / tourne** n'importe où (ou 🎲 « perdre au hasard »), puis **◎ Localiser** : il revient se poser sur la carte (animation, vert brillant), sans modifier le projet. **Robot en direct** : chaque tour du lidar est replacé en continu (Wi-Fi, câble ou démo), pilotage sur la même page. Avancé : référence, méthode, comparaison |
 | 6 Exporter | projet `.lidar.json` (retouches comprises), dossier complet, image PNG, carte vectorielle `.txt` |
 
 - **Toujours disponibles :**
