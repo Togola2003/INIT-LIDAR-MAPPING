@@ -1,15 +1,18 @@
-"""Étape 5 · Localiser : où est le robot sur la carte de référence ?
+"""Étape 5 · Localiser : replacer un scan sur la carte de référence, ou suivre le robot en direct.
 
-Deux usages :
-- « Un scan du projet » : on choisit un scan, on lance. Sans pose de départ (par défaut), la
-  localisation GLOBALE fouille toute la carte ; avec une pose approximative (clic sur la carte),
-  la méthode choisie cherche autour. Sa pose actuelle sert de vérité pour afficher l'erreur.
-- « Le robot en direct » : chaque scan reçu (robot réel ou démo qui roule dans ta carte) est localisé
-  en temps réel (localization.tracking) : global au début, puis suivi autour de la pose précédente.
-La carte utilisée est la carte de référence VALIDÉE à l'étape Cartes (sinon une carte provisoire).
+Ce que demande le TP, dans l'ordre :
+- « Scan de la liste » : on clique sur un scan dans la liste à gauche, il est aussitôt localisé sur la
+  carte de référence, SANS pose de départ (localisation globale), puis affiné par la méthode choisie.
+  Sa pose dans le projet est montrée en gris : on voit si l'algorithme le remet au même endroit.
+- « Fichier importé » : un scan qui n'est pas dans le projet (autre séance, autre groupe…).
+- « Robot en direct » : robot en Wi-Fi (piloté depuis cette page), au câble, ou démo dans la carte ;
+  chaque nouveau tour est localisé (global au début, puis autour de la pose précédente).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
+from tkinter import filedialog
 
 import customtkinter as ctk
 import numpy as np
@@ -22,14 +25,16 @@ from ...localization import vector as V
 from ...localization.globalloc import _on_map
 from ...localization.tracking import Tracker
 from ...refmap import build_reference
+from ...scope.session import read_any
 from ...segments import Segment
 from .. import style as S
+from ..components import PilotPad
 from ..tools import PoseTool
 from .base import Step
 
-MODES = ["Un scan du projet", "Le robot en direct"]
-STARTS = ["Inconnue : chercher partout", "Approximative : clic"]
+MODES = ["Scan de la liste", "Fichier importé", "Robot en direct"]
 REFS = {"Grid map": "grid", "Carte vectorielle": "vecteur", "Scan voisin": "scans"}
+LOST = 0.35            # moins de 35 % des points sur les murs : pose jugée fausse
 PERTURB = {"10 cm · 5°": (0.10, 5), "25 cm · 10°": (0.25, 10), "50 cm · 20°": (0.50, 20), "1 m · 30°": (1.0, 30)}
 EXPLAIN = {
     "exhaustive": "Teste toutes les poses autour du départ (pas de 5 cm et 1°) : sûr mais lent.",
@@ -48,16 +53,17 @@ EXPLAIN = {
 class LocateStep(Step):
     title = "Localiser"
     subtitle = "où est le robot ?"
-    headline = "Vert = scan à la pose trouvée · + = vraie pose · orange = départ (si donné) · fond = carte de référence."
+    headline = "Gris = scan à sa pose connue · vert = scan replacé par l'algorithme · fond = carte de référence."
     course = ("Scan matching : on cherche la transformation (x, y, θ) qui pose au mieux les points du scan sur la "
-              "carte. Sans pose de départ, on fouille toute la carte (localisation globale) ; avec une pose "
-              "approximative, on cherche autour (exhaustive, multi-résolution, gradient). En direct, la pose "
-              "précédente sert de point de départ au scan suivant.")
+              "carte de référence. Sans pose de départ, on fouille toute la carte (localisation globale), puis "
+              "on affine (multi-résolution, gradient…). En direct, la pose précédente sert de point de départ "
+              "au scan suivant : c'est rapide (≈ 15 ms).")
 
     def __init__(self, app) -> None:
         super().__init__(app)
         self.start: Pose | None = None
-        self.found = None           # (pose, candidats globaux)
+        self.found = None               # dict : pose, candidates, points, truth
+        self.imported: list = []        # [(label, Scan)] du fichier importé
         self.tracker: Tracker | None = None
         self.live_step = None
         self.live_points = None
@@ -69,33 +75,37 @@ class LocateStep(Step):
         card = S.Card(panel, "Carte de référence")
         card.pack(fill="x", pady=(0, 10))
         self.ref_info = S.hint(card.body, "")
-        self.validate_btn = S.button(card.body, "Valider la carte actuelle (étape Cartes)", self._validate, "ghost")
+        self.validate_btn = S.button(card.body, "Valider la carte actuelle", lambda: self.app.steps[3].validate(), "ghost")
         self.validate_btn.pack(fill="x")
 
+        ctk.CTkLabel(panel, text="Que localiser ?", font=S.font(13, "bold"), text_color=S.INK, anchor="w").pack(fill="x")
         self.mode = S.segmented(panel, MODES, MODES[0], lambda v: self._mode_changed())
-        self.mode.pack(fill="x", pady=(0, 10))
+        self.mode.pack(fill="x", pady=(4, 10))
 
-        # ---- un scan du projet
-        self.project_box = ctk.CTkFrame(panel, fg_color="transparent")
-        card = S.Card(self.project_box, "Scan à localiser")
-        card.pack(fill="x", pady=(0, 10))
-        self.target = ctk.CTkOptionMenu(card.body, values=["—"], height=30, font=S.font(12), fg_color=S.SURFACE_2,
-                                        button_color=S.BORDER, button_hover_color=S.FAINT, text_color=S.INK,
-                                        dropdown_font=S.font(12), command=lambda v: self._target_changed())
-        self.target.pack(fill="x")
-        card = S.Card(self.project_box, "Pose de départ")
-        card.pack(fill="x", pady=(0, 10))
-        self.start_mode = S.segmented(card.body, STARTS, STARTS[0], lambda v: self._start_mode_changed())
-        self.start_mode.pack(fill="x")
-        self.start_hint = S.hint(card.body, "")
-        self.start_field = S.PoseField(card.body)
-        S.button(self.project_box, "Localiser", self.run, "primary", height=44, font=S.font(15, "bold")).pack(
-            fill="x", pady=(0, 10))
+        # ---- scan de la liste
+        self.list_box = S.Card(panel, "Scan de la liste", "Clique sur un scan dans la liste à gauche : il est "
+                                                          "localisé tout de suite sur la carte de référence.")
+        self.list_label = ctk.CTkLabel(self.list_box.body, text="—", font=S.font(13, "bold"), text_color=S.MUTED,
+                                       anchor="w")
+        self.list_label.pack(fill="x")
+        S.button(self.list_box.body, "Localiser ce scan", self.run, "primary", height=42,
+                 font=S.font(14, "bold")).pack(fill="x", pady=(8, 0))
+
+        # ---- fichier importé
+        self.file_box = S.Card(panel, "Fichier importé", "Un scan qui n'est pas dans le projet (CSV du TP, "
+                                                         "RobotControl, MapTool, session…). Il n'est pas ajouté à la carte.")
+        S.button(self.file_box.body, "Importer un scan…", self.import_scan).pack(fill="x")
+        self.file_pick = ctk.CTkOptionMenu(self.file_box.body, values=["—"], height=30, font=S.font(12),
+                                           fg_color=S.SURFACE_2, button_color=S.BORDER, text_color=S.INK,
+                                           command=lambda v: self.run())
+        self.file_pick.pack(fill="x", pady=(8, 0))
+        S.button(self.file_box.body, "Localiser ce scan", self.run, "primary", height=42,
+                 font=S.font(14, "bold")).pack(fill="x", pady=(8, 0))
 
         # ---- robot en direct
         self.live_box = ctk.CTkFrame(panel, fg_color="transparent")
-        card = S.Card(self.live_box, "Robot", "Le robot réel se connecte à l'étape 1 (câble USB). Sans robot, la démo "
-                                              "fait rouler un robot simulé dans ta carte de référence.")
+        card = S.Card(self.live_box, "Robot", "Wi-Fi ou câble : connexion à l'étape 1. Sans robot : la démo fait "
+                                              "rouler un robot simulé dans ta carte.")
         card.pack(fill="x", pady=(0, 10))
         self.live_info = S.hint(card.body, "")
         row = ctk.CTkFrame(card.body, fg_color="transparent")
@@ -106,13 +116,17 @@ class LocateStep(Step):
                                    height=44, font=S.font(15, "bold"))
         self.follow_btn.pack(fill="x", pady=(0, 6))
         S.button(self.live_box, "Relocaliser dans toute la carte", self._relocalize, "ghost").pack(fill="x", pady=(0, 10))
+        self.pilot_card = S.Card(self.live_box, "Piloter (Wi-Fi)", "Déplace le robot et regarde-le se replacer.")
+        self.pilot_card.pack(fill="x", pady=(0, 10))
+        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status)
+        self.pad.pack(fill="x")
 
-        # ---- résultat (commun)
-        card = S.Card(panel, "Résultat")
-        card.pack(fill="x", pady=(0, 10))
-        self.out = S.KeyValues(card.body)
+        # ---- résultat
+        self.result_card = S.Card(panel, "Résultat")
+        self.result_card.pack(fill="x", pady=(0, 10))
+        self.out = S.KeyValues(self.result_card.body)
         self.out.pack(fill="x")
-        self.out.show([("—", "lance une localisation")])
+        self.out.show([("—", "en attente")])
 
         # ---- avancé
         adv = S.Collapsible(panel, "Avancé : référence, méthode, tests")
@@ -121,55 +135,49 @@ class LocateStep(Step):
         ctk.CTkLabel(b, text="Référence", font=S.font(12, "bold"), text_color=S.INK, anchor="w").pack(fill="x")
         self.ref = S.segmented(b, list(REFS), "Grid map", lambda v: self._ref_changed())
         self.ref.pack(fill="x", pady=(2, 8))
-        ctk.CTkLabel(b, text="Méthode (après la recherche globale, ou depuis la pose approximative)",
-                     font=S.font(12, "bold"), text_color=S.INK, anchor="w", wraplength=330, justify="left").pack(fill="x")
+        ctk.CTkLabel(b, text="Méthode d'affinage (après la recherche globale)", font=S.font(12, "bold"),
+                     text_color=S.INK, anchor="w").pack(fill="x")
         self.method_var = ctk.StringVar()
         self.method_box = ctk.CTkFrame(b, fg_color="transparent")
         self.method_box.pack(fill="x")
         self.method_hint = S.hint(b, "", S.INK)
         S.button(b, "Comparer toutes les méthodes sur ce scan", self.compare).pack(fill="x", pady=(4, 8))
         self.control = S.toggle(b, "Contrôle : carte construite sans ce scan", self._invalidate)
-        self.control.pack(anchor="w", pady=(0, 4))
+        self.control.pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(b, text="Pose de départ (facultative)", font=S.font(12, "bold"), text_color=S.INK,
+                     anchor="w").pack(fill="x")
+        S.hint(b, "Sans pose de départ, la recherche est globale. Avec une pose (à moins d'1 m et 30° de la vraie), "
+                  "seule la méthode choisie cherche autour ; si elle échoue, on repasse en global.")
         row = ctk.CTkFrame(b, fg_color="transparent")
         row.pack(fill="x")
+        S.button(row, "Cliquer sur la carte", self.pick_start, width=140).pack(side="left")
+        S.button(row, "Aucune", self.clear_start, "ghost", width=80).pack(side="left", padx=6)
+        row = ctk.CTkFrame(b, fg_color="transparent")
+        row.pack(fill="x", pady=(6, 0))
         self.perturb = ctk.CTkOptionMenu(row, values=list(PERTURB), width=120, height=30, font=S.font(12),
                                          fg_color=S.SURFACE_2, button_color=S.BORDER, text_color=S.INK)
         self.perturb.set("50 cm · 20°")
         self.perturb.pack(side="left")
-        S.button(row, "Départ = vraie pose faussée", self.perturb_truth, "ghost").pack(side="left", padx=6)
+        S.button(row, "= pose connue faussée", self.perturb_truth, "ghost").pack(side="left", padx=6)
         self.table = ctk.CTkFrame(b, fg_color="transparent")
         self.table.pack(fill="x", pady=(8, 0))
         self._ref_changed()
         self._mode_changed()
 
-    # ================================================================== état
+    # ================================================================== modes et réglages
     def _mode_changed(self) -> None:
-        live = self.mode.get() == MODES[1]
-        (self.project_box.pack_forget if live else self.project_box.pack)(**({} if live else
-                                                                            {"fill": "x", "after": self.mode}))
-        (self.live_box.pack if live else self.live_box.pack_forget)(**({"fill": "x", "after": self.mode} if live else {}))
-        if not live and self.tracker is not None:
+        mode = self.mode.get()
+        boxes = {MODES[0]: self.list_box, MODES[1]: self.file_box, MODES[2]: self.live_box}
+        for m, box in boxes.items():
+            if m == mode:
+                box.pack(fill="x", pady=(0, 10), before=self.result_card)
+            else:
+                box.pack_forget()
+        if mode != MODES[2] and self.tracker is not None:
             self.toggle_follow()
-        self.enter_tool()
+        self.found = None
+        self.out.show([("—", "en attente")])
         self.app.render()
-
-    def _start_mode_changed(self) -> None:
-        approx = self.start_mode.get() == STARTS[1]
-        self.start_hint.configure(text="Clique sur la carte à l'endroit supposé, glisse pour l'orientation."
-                                  if approx else "La localisation globale fouille toute la carte : rien à donner.")
-        if approx:
-            self.start_field.pack(anchor="w", pady=(6, 0))
-        else:
-            self.start_field.pack_forget()
-            self.start = None
-        self.enter_tool()
-        self.app.render()
-
-    def enter_tool(self) -> None:
-        if self.app.step is not self:
-            return
-        approx = self.mode.get() == MODES[0] and self.start_mode.get() == STARTS[1]
-        self.app.set_tool(PoseTool(self.app.map, self.set_start, S.INITIAL) if approx else None)
 
     def _ref_changed(self) -> None:
         kind = REFS[self.ref.get()]
@@ -180,42 +188,41 @@ class LocateStep(Step):
         for m in names:
             ctk.CTkRadioButton(self.method_box, text=m.split(" · ")[1], value=m, variable=self.method_var,
                                font=S.font(12), text_color=S.INK, fg_color=S.ACCENT, hover_color=S.ACCENT_HOVER,
-                               border_color=S.FAINT,
-                               command=lambda: self.method_hint.configure(text=EXPLAIN[self.method_var.get().split(" · ")[1]])
-                               ).pack(anchor="w", pady=2)
+                               border_color=S.FAINT, command=self._method_hint).pack(anchor="w", pady=2)
+        self._method_hint()
+
+    def _method_hint(self) -> None:
         self.method_hint.configure(text=EXPLAIN[self.method_var.get().split(" · ")[1]])
-        self.app.render()
-
-    def _targets(self) -> dict[str, int]:
-        return {c.title: c.number for c in self.project.visible}
-
-    def on_project(self) -> None:
-        names = list(self._targets()) or ["—"]
-        self.target.configure(values=names)
-        if self.target.get() not in names:
-            self.target.set(names[0])
-            self.found = None
-        ref = self.project.reference_map
-        self.ref_info.configure(text=(f"Carte validée : {ref.describe()}" if ref else
-                                      "Aucune carte validée : une carte provisoire (scans visibles + retouches) est "
-                                      "utilisée. Valide-la à l'étape Cartes pour figer la référence."),
-                                text_color=S.SUCCESS if ref else S.WARN)
-        (self.validate_btn.pack_forget if ref else self.validate_btn.pack)(**({} if ref else {"fill": "x"}))
-
-    def _target_changed(self) -> None:
-        self.found = None
-        self.app.render()
 
     def _invalidate(self) -> None:
         self.found = None
         self.app.render()
 
-    def _validate(self) -> None:
-        self.app.steps[3].validate()
+    def on_project(self) -> None:
+        ref = self.project.reference_map
+        self.ref_info.configure(text=(f"Carte validée : {ref.describe()}" if ref else
+                                      "Aucune carte validée : une carte provisoire (scans visibles + retouches) est "
+                                      "utilisée. Valide-la à l'étape Cartes pour figer la référence."),
+                                text_color=S.SUCCESS if ref else S.WARN)
+        if ref:
+            self.validate_btn.pack_forget()
+        else:
+            self.validate_btn.pack(fill="x")
+        self._show_list_target()
+
+    def _show_list_target(self) -> None:
+        cap = self.project.find(self.app.primary)
+        self.list_label.configure(text=f"● {cap.title}" if cap else "Aucun scan sélectionné",
+                                  text_color=cap.color if cap else S.MUTED)
+
+    def on_selection(self) -> None:
+        """Clic sur un scan de la liste : on le localise aussitôt."""
+        self._show_list_target()
+        if self.mode.get() == MODES[0] and self.app.step is self and self.project.find(self.app.primary):
+            self.app.root.after(10, self.run)
 
     def enter(self) -> None:
         self.on_project()
-        self.enter_tool()
 
     def leave(self) -> None:
         if self.tracker is not None:
@@ -223,7 +230,40 @@ class LocateStep(Step):
 
     def reset(self) -> None:
         self.start, self.found, self.tracker, self.live_step = None, None, None, None
+        self.imported = []
         self._refs.clear()
+
+    def on_key(self, key: str) -> None:
+        if self.mode.get() == MODES[2]:
+            self.pad.key(key)
+
+    # ================================================================== pose de départ (avancé)
+    def pick_start(self) -> None:
+        self.app.set_tool(PoseTool(self.app.map, self._start_picked, S.INITIAL))
+        self.app.status("Clique sur la carte là où tu penses que le scan a été pris, glisse pour l'orientation.")
+
+    def _start_picked(self, pose: Pose) -> None:
+        self.app.set_tool(None)
+        self.start = pose
+        self.app.status(f"Pose de départ : ({pose.x:+.2f}, {pose.y:+.2f}, {pose.theta_deg:+.0f}°). Lance la localisation.")
+        self.app.render()
+
+    def clear_start(self) -> None:
+        self.start = None
+        self.app.status("Plus de pose de départ : recherche globale dans toute la carte.")
+        self.app.render()
+
+    def perturb_truth(self) -> None:
+        target = self._target()
+        if target is None or target[2] is None:
+            self.app.status("Il faut un scan dont la pose est connue.")
+            return
+        d, a = PERTURB[self.perturb.get()]
+        rng = np.random.default_rng()
+        phi = rng.uniform(0, 2 * np.pi)
+        t = target[2]
+        self.start = t.moved(d * np.cos(phi), d * np.sin(phi), a * rng.choice([-1, 1]))
+        self.run()
 
     # ================================================================== références
     def reference_map(self, exclude: int | None = None):
@@ -240,8 +280,7 @@ class LocateStep(Step):
                                                    self.project.wall_edits))
         return self._temp_ref[1]
 
-    def references(self, ref, near_points: np.ndarray | None) -> References:
-        """Les trois références (grid, murs, scan voisin) tirées de la carte, préparées une fois par carte."""
+    def references(self, ref, near_points: np.ndarray | None = None) -> References:
         k = id(ref)
         if k not in self._refs:
             if len(self._refs) > 6:
@@ -265,114 +304,138 @@ class LocateStep(Step):
         near = min(caps, key=lambda c: np.hypot(c.scan.pose.x - pose.x, c.scan.pose.y - pose.y))
         return self.app.points(near)
 
-    # ================================================================== scan du projet
-    def _target_cap(self):
-        return self.project.find(self._targets().get(self.target.get()))
+    # ================================================================== localiser un scan
+    def _target(self):
+        """(titre, points du scan dans le repère lidar, pose connue ou None, numéro à exclure) selon le mode."""
+        if self.mode.get() == MODES[0]:
+            cap = self.project.find(self.app.primary)
+            if cap is None:
+                return None
+            return cap.title, self.app.filtered(cap).local_points(), cap.scan.pose, cap.number
+        if self.mode.get() == MODES[1] and self.imported:
+            names = [lab for lab, _ in self.imported]
+            k = names.index(self.file_pick.get()) if self.file_pick.get() in names else 0
+            lab, scan = self.imported[k]
+            known = scan.pose if scan.pose != Pose() else None
+            return lab, self.app.filters().apply(scan).local_points(), known, None
+        return None
 
-    def set_start(self, pose: Pose) -> None:
-        self.start = pose
-        self.start_field.set(pose.x, pose.y, pose.theta_deg)
-        self.found = None
-        self.app.render()
-
-    def perturb_truth(self) -> None:
-        cap = self._target_cap()
-        if cap is None:
+    def import_scan(self) -> None:
+        path = filedialog.askopenfilename(title="Scan à localiser", initialdir="data",
+                                          filetypes=[("Scans lidar", "*.csv *.json"), ("Tous", "*.*")])
+        if not path:
             return
-        d, a = PERTURB[self.perturb.get()]
-        rng = np.random.default_rng()
-        phi = rng.uniform(0, 2 * np.pi)
-        self.start_mode.set(STARTS[1])
-        self._start_mode_changed()
-        p = cap.scan.pose
-        self.set_start(p.moved(d * np.cos(phi), d * np.sin(phi), a * rng.choice([-1, 1])))
+        try:
+            self.imported = read_any(path)
+        except (ValueError, OSError, KeyError) as exc:
+            self.app.status(f"Lecture impossible : {exc}")
+            return
+        names = [f"{lab}" for lab, _ in self.imported] or ["—"]
+        self.file_pick.configure(values=names)
+        self.file_pick.set(names[0])
+        self.app.status(f"{Path(path).name} : {len(self.imported)} scan(s). Localisation du premier…")
+        self.run()
 
-    def _prepare(self):
-        cap = self._target_cap()
-        if cap is None:
-            self.app.status("Choisis un scan du projet (ou passe en mode « robot en direct »).")
-            return None
-        exclude = cap.number if self.control.get() else None
+    def _locate(self, pts: np.ndarray, exclude: int | None):
+        """Localise des points (repère lidar). Rend un dict : pose, inliers, glob (ou None), temps, origine."""
         ref = self.reference_map(exclude)
         if ref is None:
-            self.app.status("Il faut une carte : au moins un autre scan visible.")
-            return None
-        pts = self.app.filtered(cap).local_points()
-        if len(pts) < 20:
-            self.app.status("Ce scan a trop peu de points pour être localisé.")
-            return None
-        if self.start_mode.get() == STARTS[1]:
-            try:
-                self.start = Pose(*self.start_field.get())
-            except ValueError:
-                self.app.status("La pose de départ doit contenir des nombres.")
-                return None
-        return cap, exclude, ref, pts
+            raise ValueError("il faut une carte : au moins un scan visible, ou une carte validée")
+        base = self.references(ref)
+        method = self.method_var.get()
+        if self.start is not None:
+            r = localize(method, pts, self.start, self.references(ref, self._near_points(self.start, exclude)))
+            inl = float(_on_map(base.field, pts, r.pose).mean())
+            if inl >= LOST:
+                return {"pose": r.pose, "inliers": inl, "glob": None, "time": r.time_s,
+                        "how": f"depuis la pose de départ · {method.split(' · ')[1]}"}
+        glob = global_localize(pts, ref.grid, ref.segments, base.field, base.pyramid)
+        pose, inl, t = glob.pose, glob.inliers, glob.time_s
+        try:
+            r = localize(method, pts, glob.pose, self.references(ref, self._near_points(glob.pose, exclude)))
+            r_inl = float(_on_map(base.field, pts, r.pose).mean())
+            t += r.time_s
+            if r_inl >= inl:
+                pose, inl = r.pose, r_inl
+        except ValueError:
+            pass
+        return {"pose": pose, "inliers": inl, "glob": glob, "time": t,
+                "how": f"globale + {method.split(' · ')[1]}"}
 
     def run(self) -> None:
-        prep = self._prepare()
-        if prep is None:
+        target = self._target()
+        if target is None:
+            self.app.status("Choisis un scan : clic dans la liste à gauche, ou « Importer un scan… ».")
             return
-        cap, exclude, ref, pts = prep
-        self.app.status("Localisation en cours…")
+        title, pts, known, num = target
+        if len(pts) < 20:
+            self.app.status(f"{title} : trop peu de points pour se localiser.")
+            return
+        exclude = num if (num is not None and self.control.get()) else None
+        self.app.status(f"Localisation de {title}…")
         self.app.root.update_idletasks()
-        rows, glob = [], None
-        start, t_global = self.start, 0.0
-        if start is None:
-            glob = global_localize(pts, ref.grid, ref.segments, self.references(ref, None).field,
-                                   self.references(ref, None).pyramid)
-            start, t_global = glob.pose, glob.time_s
-        refs = self.references(ref, self._near_points(start, exclude))
-        method = self.method_var.get()
         try:
-            r = localize(method, pts, start, refs)
+            res = self._locate(pts, exclude)
         except ValueError as exc:
-            self.app.status(f"Méthode impossible avec cette carte : {exc}")
+            self.app.status(str(exc))
             return
-        inl = float(_on_map(refs.field, pts, r.pose).mean())
-        self.found = (r.pose, glob.candidates[1:3] if glob else [])
-        rows.append(("Pose trouvée", f"{r.pose.x:+.2f}  {r.pose.y:+.2f}  {r.pose.theta_deg:+.1f}°"))
-        if glob:
-            rows.append(("Confiance", "ambiguë ⚠ (salle symétrique vue d'ici)" if glob.ambiguous else "fiable ✓"))
-        rows += [("Points sur les murs", f"{inl:.0%}"), ("Temps", f"{(t_global + r.time_s) * 1000:.0f} ms"),
-                 ("Méthode", ("globale + " if glob else "") + method.split(" · ")[1])]
-        truth = cap.scan.pose
-        e, a = pose_error(r.pose, truth)
-        ok = e < 0.05 and a < 2.0
-        rows += [("Écart à la pose du scan", f"{e * 100:.1f} cm · {a:.2f}°"), ("Verdict", "retrouvé ✓" if ok else "différent ✗")]
+        glob = res["glob"]
+        p = res["pose"]
+        self.found = {"pose": p, "points": pts, "truth": known,
+                      "others": [c for c, _ in glob.candidates[1:3]] if glob else []}
+        sure = res["inliers"] >= LOST and not (glob and glob.ambiguous)
+        rows = [("Scan", title if len(title) < 30 else title[:29] + "…"),
+                ("Pose trouvée", f"{p.x:+.2f}  {p.y:+.2f}  {p.theta_deg:+.1f}°"),
+                ("Points sur les murs", f"{res['inliers']:.0%}"),
+                ("Confiance", "fiable ✓" if sure else ("ambiguë ⚠" if glob and glob.ambiguous else "faible ⚠")),
+                ("Temps", f"{res['time'] * 1000:.0f} ms"), ("Méthode", res["how"])]
+        msg = f"{title} : replacé en ({p.x:+.2f}, {p.y:+.2f}, {p.theta_deg:+.1f}°), {res['inliers']:.0%} des points sur les murs"
+        if known is not None:
+            e, a = pose_error(p, known)
+            ok = e < 0.05 and a < 2.0
+            rows += [("Écart à la pose connue", f"{e * 100:.1f} cm · {a:.2f}°"),
+                     ("Verdict", "au même endroit ✓" if ok else "ailleurs ✗")]
+            msg += f" · écart {e * 100:.1f} cm {'✓' if ok else '✗'}"
+        if not sure:
+            rows.append(("Pourquoi ?", "trop peu de murs vus (meubles proches, zone hors carte, salle symétrique)"))
         self.out.show(rows, highlight="Pose trouvée")
-        self.app.status(f"{cap.title} : pose ({r.pose.x:+.2f}, {r.pose.y:+.2f}, {r.pose.theta_deg:+.1f}°), "
-                        f"{inl:.0%} des points sur les murs, écart {e * 100:.1f} cm" +
-                        (" · ⚠ ambiguë" if glob and glob.ambiguous else ""))
+        self.app.status(msg)
         self.app.render()
 
     def compare(self) -> None:
-        prep = self._prepare()
-        if prep is None:
+        target = self._target()
+        if target is None:
             return
-        cap, exclude, ref, pts = prep
-        start = self.start
-        if start is None:
-            base = self.references(ref, None)
-            start = global_localize(pts, ref.grid, ref.segments, base.field, base.pyramid).pose
+        title, pts, known, num = target
+        exclude = num if (num is not None and self.control.get()) else None
+        ref = self.reference_map(exclude)
+        if ref is None:
+            return
+        base = self.references(ref)
+        start = self.start or global_localize(pts, ref.grid, ref.segments, base.field, base.pyramid).pose
         refs = self.references(ref, self._near_points(start, exclude))
         for w in self.table.winfo_children():
             w.destroy()
-        ctk.CTkLabel(self.table, text="Même scan, même départ — vert : < 5 cm et < 2°", font=S.font(11),
-                     text_color=S.MUTED, anchor="w").grid(row=0, column=0, columnspan=3, sticky="w")
+        what = "écart à la pose connue" if known is not None else "points sur les murs"
+        ctk.CTkLabel(self.table, text=f"Même scan, même départ · {what}", font=S.font(11), text_color=S.MUTED,
+                     anchor="w").grid(row=0, column=0, columnspan=3, sticky="w")
         for k, m in enumerate(METHODS, start=1):
             try:
                 r = localize(m, pts, start, refs)
             except ValueError:
                 continue
-            e, a = pose_error(r.pose, cap.scan.pose)
-            col = S.SUCCESS if (e < 0.05 and a < 2.0) else S.DANGER
+            if known is not None:
+                e, a = pose_error(r.pose, known)
+                txt, ok = f"{e * 100:.1f} cm {a:.1f}°", e < 0.05 and a < 2.0
+            else:
+                inl = float(_on_map(base.field, pts, r.pose).mean())
+                txt, ok = f"{inl:.0%}", inl >= LOST
             ctk.CTkLabel(self.table, text=m, font=S.font(11), text_color=S.INK, anchor="w").grid(row=k, column=0, sticky="w")
-            ctk.CTkLabel(self.table, text=f"{e * 100:.1f} cm {a:.1f}°", font=S.font(11, mono=True),
-                         text_color=col).grid(row=k, column=1, sticky="e", padx=6)
+            ctk.CTkLabel(self.table, text=txt, font=S.font(11, mono=True),
+                         text_color=S.SUCCESS if ok else S.DANGER).grid(row=k, column=1, sticky="e", padx=6)
             ctk.CTkLabel(self.table, text=f"{r.time_s * 1000:.0f} ms", font=S.font(11, mono=True),
                          text_color=S.MUTED).grid(row=k, column=2, sticky="e")
-        self.app.status("Comparaison terminée (départ : " + ("pose approximative" if self.start else "localisation globale") + ").")
+        self.app.status(f"Comparaison terminée sur {title}.")
 
     # ================================================================== robot en direct
     def _demo(self) -> None:
@@ -380,13 +443,12 @@ class LocateStep(Step):
         if ref is None or not ref.segments:
             self.app.status("Il faut une carte avec des murs (étape Cartes) pour la démo.")
             return
-        walls = [s.as_tuple() for s in ref.segments]
         way = [(p.x, p.y) for _, p in ref.scans] or [(0.0, 0.0)]
         order = [way.pop(0)]
-        while way:                                    # on visite les poses des scans de proche en proche
+        while way:
             k = min(range(len(way)), key=lambda i: np.hypot(way[i][0] - order[-1][0], way[i][1] - order[-1][1]))
             order.append(way.pop(k))
-        self.app.map_demo(walls, order)
+        self.app.map_demo([s.as_tuple() for s in ref.segments], order)
         self.app.status("Démo : un robot simulé roule dans ta carte. Clique sur « Suivre le robot ».")
 
     def toggle_follow(self) -> None:
@@ -396,7 +458,7 @@ class LocateStep(Step):
             self.app.status("Suivi arrêté.")
             return
         if self.app.source is None:
-            self.app.status("Aucun robot : lance la démo sur ta carte, ou connecte le robot à l'étape 1.")
+            self.app.status("Aucun robot : « Démo sur ma carte », ou connecte le robot à l'étape 1 (Wi-Fi ou câble).")
             return
         ref = self.reference_map()
         if ref is None:
@@ -405,20 +467,21 @@ class LocateStep(Step):
         self.tracker = Tracker(ref.grid, ref.segments)
         self.live_step = None
         self.follow_btn.configure(text="■  Arrêter le suivi", fg_color=S.WARN, hover_color="#E68600")
-        self.app.status("Suivi : 1er scan localisé dans toute la carte, puis autour de la pose précédente.")
+        self.app.status("Suivi : 1er tour localisé dans toute la carte, puis autour de la pose précédente.")
 
     def _relocalize(self) -> None:
         if self.tracker is not None:
             self.tracker.reset()
-            self.app.status("Le prochain scan sera localisé dans toute la carte.")
+            self.app.status("Le prochain tour sera localisé dans toute la carte.")
 
     def on_live(self, frame) -> None:
-        if self.mode.get() != MODES[1]:
+        if self.mode.get() != MODES[2]:
             return
-        src = "démo sur ta carte" if self.app.demo_truth is not None else "robot"
-        self.live_info.configure(text=f"Connecté ({src}) · {int((frame.scan.ranges_m > 0).sum())} points par tour",
+        kind = "démo dans ta carte" if self.app.demo_truth is not None else self.app.source_label
+        self.live_info.configure(text=f"Connecté : {kind} · {int((frame.scan.ranges_m > 0).sum())} points par tour",
                                  text_color=S.SUCCESS)
         if self.tracker is None:
+            self.live_points = self.app.filters().apply(frame.scan).local_points()
             return
         pts = self.app.filters().apply(frame.scan).local_points()
         try:
@@ -441,44 +504,39 @@ class LocateStep(Step):
     # ================================================================== carte
     def render(self) -> None:
         app = self.app
-        live = self.mode.get() == MODES[1]
-        cap = None if live else self._target_cap()
-        exclude = cap.number if (cap is not None and self.control.get()) else None
-        ref = self.reference_map(exclude) if not self.project.is_empty or self.project.reference_map else None
+        mode = self.mode.get()
+        target = self._target() if mode != MODES[2] else None
+        exclude = target[3] if (target is not None and target[3] is not None and self.control.get()) else None
+        ref = self.reference_map(exclude)
         if ref is None:
             self.clear_map()
             app.map.draw_overlay([], [], [])
             return
-        img = 1.0 - ref.grid.probability()
-        app.map.draw_analysis(img, ref.grid.extent(), list(ref.segments), [], None)
+        app.map.draw_analysis(1.0 - ref.grid.probability(), ref.grid.extent(), list(ref.segments), [], None)
         layers, poses, trail = [], [], []
-        if live:
+        if mode == MODES[2]:
             st = self.live_step
             if st is not None and self.live_points is not None:
-                layers.append((local_to_global(self.live_points, st.pose), S.FOUND, 7, "o"))
+                layers.append((local_to_global(self.live_points, st.pose), S.FOUND, 8, "o"))
                 poses.append((st.pose, S.ACCENT, True))
             if self.tracker is not None and len(self.tracker.trail) > 1:
                 tr = self.tracker.trail
                 trail = [Segment(a.x, a.y, b.x, b.y) for a, b in zip(tr, tr[1:])]
             truth = app.demo_truth
             if truth is not None:
-                layers.append((np.array([[truth.x, truth.y]]), S.INK, 260, "+"))
-            self.legend("bleu = robot localisé · vert = son scan · trait = trajet · + = vraie pose (démo)")
-        elif cap is not None:
-            pts = app.filtered(cap).local_points()
+                poses.append((truth, S.FAINT, False))
+            self.legend("bleu = robot localisé · vert = ses points · trait = trajet · gris = vraie pose (démo)")
+        elif target is not None:
+            _, pts, known, _ = target
+            if known is not None:
+                layers.append((local_to_global(pts, known), "#B8B8BE", 6, "o"))
+                poses.append((known, "#8E8E93", False))
             if self.start is not None:
-                layers.append((local_to_global(pts, self.start), S.INITIAL, 6, "o"))
                 poses.append((self.start, S.INITIAL, False))
-            if self.found is not None:
-                pose, others = self.found
-                layers.append((local_to_global(pts, pose), S.FOUND, 9, "o"))
-                poses.append((pose, S.FOUND, True))
-                for p, _ in others:
+            if self.found is not None and np.array_equal(self.found["points"], pts):
+                for p in self.found["others"]:
                     poses.append((p, S.FAINT, False))
-            layers.append((np.array([[cap.scan.pose.x, cap.scan.pose.y]]), S.INK, 260, "+"))
-            if REFS[self.ref.get()] == "scans" and self.found is not None:
-                near = self._near_points(self.found[0], exclude)
-                if near is not None:
-                    layers.insert(0, (near, S.FAINT, 4, "o"))
-            self.legend("vert = trouvé · gris = autres candidats · orange = départ · + = pose connue")
+                layers.append((local_to_global(pts, self.found["pose"]), S.FOUND, 9, "o"))
+                poses.append((self.found["pose"], S.FOUND, True))
+            self.legend("gris = pose connue · vert = replacé par l'algorithme · orange = départ donné")
         app.map.draw_overlay(layers, [(trail, S.ACCENT, 2.0)] if trail else [], poses)
