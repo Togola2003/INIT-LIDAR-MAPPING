@@ -576,6 +576,8 @@ class LidarStudio:
 
     @staticmethod
     def _describe(res, before: Pose) -> str:
+        if not res.converged:
+            return "ICP refusé (n'améliorait pas l'accord) : pose gardée"
         warn = " ⚠" if res.inlier_ratio < LOW_OVERLAP else ""
         p = res.pose
         return (f"ICP rms {res.rms_m * 100:4.1f}cm rec.{res.inlier_ratio:4.0%}{warn} "

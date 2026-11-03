@@ -97,12 +97,22 @@ def icp(local_points: np.ndarray, initial: Pose, reference: np.ndarray,
     return IcpResult(pose, rms, ratio, total, True)
 
 
+def agreement(local_points: np.ndarray, pose: Pose, reference: np.ndarray, d_max: float = 0.3) -> float:
+    """Accord d'un scan avec une référence : part de ses points à moins de d_max d'un point de référence,
+    pondérée par leur proximité (1 = parfait). Sert à vérifier qu'un recalage améliore vraiment les choses."""
+    _, d = nearest(local_to_global(local_points, pose), reference)
+    return float(np.clip(1 - d / d_max, 0, 1).mean())
+
+
 def align_sequence(scans_local: list[np.ndarray], poses: list[Pose], anchor: int = 0,
                    voxel: float = 0.03) -> list[tuple[Pose, IcpResult | None]]:
     """Recale les scans un par un sur la carte formée par les scans DÉJÀ recalés.
 
     Le scan 'anchor' sert de référence fixe (sa pose est gardée). Les autres sont traités du plus
     proche au plus éloigné de lui, pour que chaque scan recouvre au mieux la carte déjà construite.
+    Sécurité : la correction n'est gardée que si elle AMÉLIORE l'accord avec la carte (sinon l'ICP
+    a pu « glisser » le long d'un mur droit, qui ne contraint pas la position dans sa direction).
+    Un résultat refusé est rendu avec converged=False et la pose d'origine.
     """
     order = sorted(range(len(poses)), key=lambda k: np.hypot(poses[k].x - poses[anchor].x,
                                                              poses[k].y - poses[anchor].y))
@@ -112,6 +122,8 @@ def align_sequence(scans_local: list[np.ndarray], poses: list[Pose], anchor: int
         if k == anchor:
             continue
         res = icp(scans_local[k], poses[k], reference)
+        if agreement(scans_local[k], res.pose, reference) <= agreement(scans_local[k], poses[k], reference):
+            res = IcpResult(poses[k], res.rms_m, res.inlier_ratio, res.iterations, False)
         out[k] = (res.pose, res)
         reference = voxel_downsample(np.vstack([reference, local_to_global(scans_local[k], res.pose)]), voxel)
     return out
