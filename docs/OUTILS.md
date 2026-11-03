@@ -85,6 +85,7 @@ cartes sont reconstruites au relâchement.
 | `segments.py`, `extraction.py` | opérations sur segments, et nuage de points → segments |
 | `vectormap.py` | carte vectorielle (association, fusion, détection d'absence, nettoyage) |
 | `matching.py` | ICP point à point, `refine_global` (multi-scans, point à droite), `align_best`, `consistency` |
+| `localization/` | Jour 2 : champ de vraisemblance, recherche exhaustive, multi-résolution, Gauss-Newton (grid map) ; point → segment par Gauss-Newton et calcul direct (carte vectorielle) ; ICP point à point et point à droite (entre scans). `METHODS` les rend interchangeables |
 | `scope/collector.py` | récolte de N tours et combinaison (médiane / tous les points), bruit des distances |
 | `simulate.py` | salle simulée pour vérifier les algorithmes |
 

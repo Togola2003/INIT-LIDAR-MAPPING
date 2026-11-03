@@ -29,6 +29,9 @@ Liste complète des commits : `git log --oneline` ; versions de fin d'étape : `
 | Heure | Étape | Commit |
 |---|---|---|
 | 10:00 → 13:45 | Nouvelle acquisition en salle (`printScanCSV`, avec intensité) et recalage à la main dans les applis : export de 13:45 retenu (écart entre scans 5,2 → 3,0 cm par rapport à l'export de 12:41) | données ajoutées ensuite |
-| 14:10 | Nettoyage (doublons `aa/`, sorties régénérables), jeu de données `data/salle_jour2/`, plan du Jour 2 | voir `git log` |
+| 14:10 | Nettoyage (doublons `aa/`, sorties régénérables), jeu de données `data/salle_jour2/`, plan du Jour 2 | `f68ace9` |
+| après-midi | **Localisation, étape 1 :** grid map, champ de vraisemblance. Gradient seul (précis mais coincé quand on part de loin), puis recherche exhaustive et multi-résolution (robustes), puis la combinaison | voir `git log` |
+| après-midi | **Étape 2 :** carte vectorielle (Gauss-Newton, calcul direct). **Étape 3 :** entre scans (ICP point à point, point à droite) | voir `git log` |
+| après-midi | **Étape 4 :** banc d'essai commun (6 240 localisations), critère de zone couverte, compte rendu du Jour 2 | voir `git log` |
 
 ## Jour 3 : à venir

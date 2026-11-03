@@ -1,5 +1,7 @@
 # TP Jour 2 : localisation (scan matching)
 
+**Compte rendu : [COMPTE_RENDU.md](COMPTE_RENDU.md).** Ce fichier garde le plan de départ.
+
 **Question à résoudre :** un scan et une pose approximative étant donnés, retrouver la vraie pose (x, y, θ) du robot
 en alignant le scan sur une **référence**, puis comparer les méthodes avec des chiffres.
 
@@ -19,13 +21,13 @@ en alignant le scan sur une **référence**, puis comparer les méthodes avec de
 
 | # | Attendu | Méthodes retenues | État |
 |---|---|---|---|
-| 1 | Localisation sur **grid map** | champ de vraisemblance (distance aux cellules occupées) : **recherche exhaustive**, **multi-résolution**, puis raffinement **par gradient** | ⬜ |
-| 2 | Localisation sur **carte vectorielle** | distance point → segment : **Gauss-Newton** (gradient), **calcul direct** (Kabsch sur les projections) | ⬜ |
-| 3 | Localisation **entre scans** | **ICP point à point** (calcul direct itéré, existe), ICP point à droite, recherche exhaustive en référence | 🟡 |
-| — | Mêmes scans, mêmes poses initiales pour toutes les méthodes | banc d'essai commun `TP/Jour2/banc_essai.py` | ⬜ |
-| — | Erreur de position (m), erreur angulaire (°), temps, taux de réussite | réussite = erreur < **5 cm et < 2°** (≈ 1 cellule de grid map, bruit LD06 ≈ 1-2 cm) | ⬜ |
-| — | Sensibilité à l'initialisation | pose initiale faussée de 0,1 à 1 m et de 5 à 30°, 8 directions | ⬜ |
-| — | Poses connues en simulation + incertitude des références réelles | simulation : vérité exacte ; réel : référence = poses recalées, incertitude ≈ écart entre scans (2-3 cm, ~0,5°) | ⬜ |
+| 1 | Localisation sur **grid map** | champ de vraisemblance (distance aux cellules occupées) : **recherche exhaustive**, **multi-résolution**, puis raffinement **par gradient** | ✅ 99 % (réel, zone couverte) |
+| 2 | Localisation sur **carte vectorielle** | distance point → segment : **Gauss-Newton** (gradient), **calcul direct** (Kabsch sur les projections) | ✅ 100 % avec multi-résolution |
+| 3 | Localisation **entre scans** | **ICP point à point** (calcul direct itéré, existe), ICP point à droite, multi-résolution + ICP | ✅ 93 % |
+| — | Mêmes scans, mêmes poses initiales pour toutes les méthodes | banc d'essai commun `TP/Jour2/banc_essai.py` | ✅ |
+| — | Erreur de position (m), erreur angulaire (°), temps, taux de réussite | réussite = erreur < **5 cm et < 2°** (≈ 1 cellule de grid map, bruit LD06 ≈ 1-2 cm) | ✅ |
+| — | Sensibilité à l'initialisation | pose initiale faussée de 0,1 à 1 m et de 5 à 30°, 6 tirages par niveau | ✅ |
+| — | Poses connues en simulation + incertitude des références réelles | simulation : vérité exacte ; réel : référence = poses recalées, incertitude ≈ écart entre scans (2-3 cm, ~0,5°) | ✅ 2,4 cm |
 | bonus | Méthode probabiliste | filtre de particules ou recuit simulé sur la grid map | facultatif |
 
 ## Protocole d'évaluation (le même pour toutes les méthodes)
