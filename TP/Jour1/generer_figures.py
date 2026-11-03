@@ -4,7 +4,7 @@
 
 Entrée  : data/salle/session_salle_2026-11-02.lidar.json (16 scans réels, poses mesurées à la main)
 Sorties : TP/Jour1/figures/*.png, TP/Jour1/resultats/* (grid map, carte vectorielle, métriques)
-          data/salle/session_salle_recalee.lidar.json (mêmes scans, poses corrigées par ICP)
+          data/salle/session_salle_recalee.lidar.json (mêmes scans, poses corrigées : recalage complet)
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import numpy as np  # noqa: E402
 from lidar.extraction import ExtractionParams, extraction_stages  # noqa: E402
 from lidar.geometry import Pose, local_to_global  # noqa: E402
 from lidar.gridmap import save_grid_csv  # noqa: E402
-from lidar.matching import align_sequence, nearest, voxel_downsample  # noqa: E402
+from lidar.matching import align_best, align_sequence, nearest, voxel_downsample  # noqa: E402
 from lidar.scope.mapping import GridParams, MapParams, VectorParams, beam_image, build_maps  # noqa: E402
 from lidar.scope.processing import Filters  # noqa: E402
 from lidar.scope.session import load_session, save_session  # noqa: E402
@@ -114,31 +114,43 @@ def real_data(metrics: dict) -> None:
     metrics["pretraitement"] = {"points_avec_echo": kept + rej_range + rej_nb, "gardes": kept,
                                 "hors_portee": rej_range, "isoles": rej_nb}
 
-    # Recalage ICP
+    # Recalage : ICP scan par scan (pour comparer), puis recalage complet = optimisation globale de
+    # toutes les poses ensemble, depuis le meilleur des deux départs (poses mesurées / ICP)
     before = consistency(caps)
+    local = [FILTERS.apply(c.scan).local_points() for c in caps]
     t = time.time()
-    out = align_sequence([FILTERS.apply(c.scan).local_points() for c in caps], [c.scan.pose for c in caps], anchor)
-    dt = time.time() - t
-    aligned = [replace(c, scan=c.scan.with_pose(p)) for c, (p, _) in zip(caps, out)]
+    out = align_sequence(local, [c.scan.pose for c in caps], anchor)
+    dt_seq = time.time() - t
+    seq = [replace(c, scan=c.scan.with_pose(p)) for c, (p, _) in zip(caps, out)]
+    mid = consistency(seq)
+    t = time.time()
+    glob, how = align_best(local, [c.scan.pose for c in caps], anchor)
+    dt_glob = time.time() - t
+    aligned = [replace(c, scan=c.scan.with_pose(p)) for c, p in zip(caps, glob.poses)]
     after = consistency(aligned)
     rows = []
-    for c, (p, r), b, a in zip(caps, out, before, after):
+    for c, (_, r), g, b, m, a in zip(caps, out, glob.poses, before, mid, after):
         q = c.scan.pose
-        rows.append({"scan": c.title, "ecart_avant_cm": round(b * 100, 1), "ecart_apres_cm": round(a * 100, 1),
-                     "correction": [round(p.x - q.x, 3), round(p.y - q.y, 3), round(p.theta_deg - q.theta_deg, 2)],
+        rows.append({"scan": c.title, "ecart_avant_cm": round(b * 100, 1), "ecart_icp_cm": round(m * 100, 1),
+                     "ecart_final_cm": round(a * 100, 1),
+                     "correction": [round(g.x - q.x, 3), round(g.y - q.y, 3), round(g.theta_deg - q.theta_deg, 2)],
                      "icp_rms_cm": None if r is None else round(r.rms_m * 100, 1),
                      "recouvrement": None if r is None else round(r.inlier_ratio, 2)})
     metrics["recalage"] = {"ecart_median_avant_cm": round(float(np.median(before)) * 100, 1),
-                           "ecart_median_apres_cm": round(float(np.median(after)) * 100, 1),
-                           "temps_s": round(dt, 1), "par_scan": rows}
+                           "ecart_median_icp_cm": round(float(np.median(mid)) * 100, 1),
+                           "ecart_median_final_cm": round(float(np.median(after)) * 100, 1),
+                           "temps_icp_s": round(dt_seq, 2), "temps_global_s": round(dt_glob, 2),
+                           "iterations_global": glob.iterations, "depart_retenu": how, "par_scan": rows}
     save_session(aligned, ROOT / "data/salle/session_salle_recalee.lidar.json",
-                 {"recalage": "ICP séquentiel, ancre " + ANCHOR, "filters": FILTERS.as_dict()})
+                 {"recalage": f"recalage complet ({how}), ancre " + ANCHOR,
+                  "filters": FILTERS.as_dict()})
 
-    fig, axes = plt.subplots(1, 2, figsize=(15, 8))
-    for ax, cs, title in ((axes[0], caps, f"avant (écart médian {np.median(before) * 100:.1f} cm)"),
-                          (axes[1], aligned, f"après ICP (écart médian {np.median(after) * 100:.1f} cm)")):
+    fig, axes = plt.subplots(1, 3, figsize=(22, 8))
+    for ax, cs, title in ((axes[0], caps, f"poses mesurées (écart médian {np.median(before) * 100:.1f} cm)"),
+                          (axes[1], seq, f"ICP scan par scan ({np.median(mid) * 100:.1f} cm)"),
+                          (axes[2], aligned, f"recalage complet, global ({np.median(after) * 100:.1f} cm)")):
         scatter_caps(ax, cs)
-        new_ax(ax, "Fig. 3 - Recalage " + title)
+        new_ax(ax, "Fig. 3 - " + title)
     save(fig, "fig3_recalage_avant_apres.png")
 
     # Fig 4 : grid map d'UN scan + cellules traversées / d'impact

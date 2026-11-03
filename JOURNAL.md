@@ -22,6 +22,8 @@ Liste complète des commits : `git log --oneline` ; versions de fin d'étape : `
 | 07:12 | **LidarStudio** : cartographie hors ligne en 6 étapes du cours | `75ad0ec` |
 | matin | Compte rendu du Jour 1 avec les figures des scans réels, dossier `TP/`, ce journal, tag `jour1` | voir `git log` |
 
+| après-midi | **Outils plus simples et plus rapides** : déplacer / tourner les scans à la souris (plusieurs à la fois, Ctrl+Z), capture par récolte de N tours avec aperçu, arbre k-d (ICP 80× plus rapide), **recalage global** de toutes les poses (6,4 → 2,2 cm), dépôt organisé en deux parties (outils / réalisation du TP) | voir `git log` |
+
 ## Jour 2 : à venir
 
 ## Jour 3 : à venir

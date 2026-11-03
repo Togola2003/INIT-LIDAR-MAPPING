@@ -5,8 +5,8 @@
 | # | Attendu | Piste retenue | État |
 |---|---|---|---|
 | 1 | Localisation sur **grid map** (le scan doit être dans une zone couverte) | recherche exhaustive puis multi-résolution sur la carte de vraisemblance | ⬜ à faire |
-| 2 | Localisation sur **carte vectorielle** | distance point → segment + descente de gradient / ICP point-à-ligne | ⬜ à faire |
-| 3 | Localisation **entre scans** (scan pris près du scan de référence) | ICP point à point (`src/lidar/matching.py`, déjà validé au Jour 1) | 🟡 base prête |
+| 2 | Localisation sur **carte vectorielle** | distance point → segment + Gauss-Newton (même principe que `refine_global`, point à droite) | ⬜ à faire |
+| 3 | Localisation **entre scans** (scan pris près du scan de référence) | ICP point à point (`src/lidar/matching.py`, déjà validé au Jour 1, arbre k-d : 0,01 s par scan) | 🟡 base prête |
 | — | Comparer les méthodes : mêmes scans, mêmes poses initiales | banc d'essai commun | ⬜ |
 | — | Mesurer : erreur de position (m), erreur angulaire (°), temps de calcul, taux de réussite (seuils explicités) | | ⬜ |
 | — | Faire varier la pose initiale (sensibilité à l'initialisation) | | ⬜ |

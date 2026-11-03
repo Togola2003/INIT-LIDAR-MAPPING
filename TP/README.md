@@ -1,4 +1,7 @@
-# TP Cartographie & Localisation : suivi par jour
+# Partie B : réalisation du TP, suivi par jour
+
+Ici, uniquement **mon travail de TP** : mesures en salle, résultats, comptes rendus. Les outils utilisés pour
+le produire (applications, bibliothèque, tests, leçons) sont décrits dans [../docs/OUTILS.md](../docs/OUTILS.md).
 
 | Jour | Sujet | Compte rendu | État |
 |---|---|---|---|

@@ -32,17 +32,22 @@
  },
  "recalage": {
   "ecart_median_avant_cm": 6.4,
-  "ecart_median_apres_cm": 3.2,
-  "temps_s": 18.5,
+  "ecart_median_icp_cm": 3.2,
+  "ecart_median_final_cm": 2.2,
+  "temps_icp_s": 0.18,
+  "temps_global_s": 1.31,
+  "iterations_global": 16,
+  "depart_retenu": "global depuis les poses actuelles",
   "par_scan": [
    {
     "scan": "Scan 1",
     "ecart_avant_cm": 8.3,
-    "ecart_apres_cm": 2.5,
+    "ecart_icp_cm": 2.5,
+    "ecart_final_cm": 2.1,
     "correction": [
-     0.062,
-     0.307,
-     -0.27
+     0.096,
+     0.332,
+     0.79
     ],
     "icp_rms_cm": 2.1,
     "recouvrement": 0.75
@@ -50,11 +55,12 @@
    {
     "scan": "Scan 2",
     "ecart_avant_cm": 6.0,
-    "ecart_apres_cm": 1.9,
+    "ecart_icp_cm": 1.9,
+    "ecart_final_cm": 1.8,
     "correction": [
-     0.072,
-     0.125,
-     3.41
+     0.098,
+     0.137,
+     4.55
     ],
     "icp_rms_cm": 2.4,
     "recouvrement": 0.68
@@ -62,11 +68,12 @@
    {
     "scan": "Scan 3",
     "ecart_avant_cm": 19.8,
-    "ecart_apres_cm": 20.1,
+    "ecart_icp_cm": 20.1,
+    "ecart_final_cm": 20.9,
     "correction": [
-     0.064,
-     0.436,
-     1.94
+     0.028,
+     0.081,
+     2.62
     ],
     "icp_rms_cm": 1.3,
     "recouvrement": 0.11
@@ -74,11 +81,12 @@
    {
     "scan": "Scan 4",
     "ecart_avant_cm": 4.4,
-    "ecart_apres_cm": 8.2,
+    "ecart_icp_cm": 8.2,
+    "ecart_final_cm": 2.7,
     "correction": [
-     -0.055,
-     0.296,
-     -0.01
+     -0.114,
+     -0.062,
+     1.17
     ],
     "icp_rms_cm": 3.0,
     "recouvrement": 0.54
@@ -86,11 +94,12 @@
    {
     "scan": "Scan 5",
     "ecart_avant_cm": 3.6,
-    "ecart_apres_cm": 4.0,
+    "ecart_icp_cm": 4.0,
+    "ecart_final_cm": 2.3,
     "correction": [
-     -0.004,
-     -0.011,
-     2.14
+     -0.153,
+     0.0,
+     2.83
     ],
     "icp_rms_cm": 2.4,
     "recouvrement": 0.57
@@ -98,11 +107,12 @@
    {
     "scan": "Scan 6",
     "ecart_avant_cm": 10.1,
-    "ecart_apres_cm": 8.6,
+    "ecart_icp_cm": 8.6,
+    "ecart_final_cm": 3.9,
     "correction": [
-     -0.174,
-     0.365,
-     2.66
+     -0.18,
+     0.053,
+     3.62
     ],
     "icp_rms_cm": 2.5,
     "recouvrement": 0.39
@@ -110,11 +120,12 @@
    {
     "scan": "Scan 7",
     "ecart_avant_cm": 9.5,
-    "ecart_apres_cm": 15.6,
+    "ecart_icp_cm": 15.6,
+    "ecart_final_cm": 7.1,
     "correction": [
-     -0.04,
-     0.155,
-     2.04
+     -0.049,
+     0.141,
+     2.1
     ],
     "icp_rms_cm": 2.1,
     "recouvrement": 0.47
@@ -122,11 +133,12 @@
    {
     "scan": "Scan 8",
     "ecart_avant_cm": 5.8,
-    "ecart_apres_cm": 1.4,
+    "ecart_icp_cm": 1.4,
+    "ecart_final_cm": 1.2,
     "correction": [
-     -0.013,
-     0.125,
-     4.02
+     0.04,
+     -0.209,
+     4.25
     ],
     "icp_rms_cm": 1.3,
     "recouvrement": 0.93
@@ -134,11 +146,12 @@
    {
     "scan": "Scan 9",
     "ecart_avant_cm": 6.8,
-    "ecart_apres_cm": 1.4,
+    "ecart_icp_cm": 1.4,
+    "ecart_final_cm": 1.1,
     "correction": [
-     -0.113,
-     0.078,
-     1.12
+     -0.06,
+     -0.26,
+     1.4
     ],
     "icp_rms_cm": 3.2,
     "recouvrement": 0.33
@@ -146,11 +159,12 @@
    {
     "scan": "Scan 10",
     "ecart_avant_cm": 9.2,
-    "ecart_apres_cm": 10.8,
+    "ecart_icp_cm": 10.8,
+    "ecart_final_cm": 3.6,
     "correction": [
-     -0.039,
-     0.045,
-     3.68
+     0.048,
+     0.077,
+     4.38
     ],
     "icp_rms_cm": 2.7,
     "recouvrement": 0.48
@@ -158,11 +172,12 @@
    {
     "scan": "Scan 12",
     "ecart_avant_cm": 16.1,
-    "ecart_apres_cm": 10.2,
+    "ecart_icp_cm": 10.2,
+    "ecart_final_cm": 7.9,
     "correction": [
-     -0.051,
-     0.211,
-     0.84
+     0.017,
+     0.182,
+     2.86
     ],
     "icp_rms_cm": 4.2,
     "recouvrement": 0.48
@@ -170,11 +185,12 @@
    {
     "scan": "Scan 13",
     "ecart_avant_cm": 9.8,
-    "ecart_apres_cm": 5.0,
+    "ecart_icp_cm": 5.0,
+    "ecart_final_cm": 2.5,
     "correction": [
-     -0.1,
-     0.229,
-     0.67
+     -0.107,
+     -0.13,
+     1.3
     ],
     "icp_rms_cm": 2.3,
     "recouvrement": 0.35
@@ -182,11 +198,12 @@
    {
     "scan": "Scan 14",
     "ecart_avant_cm": 3.8,
-    "ecart_apres_cm": 1.5,
+    "ecart_icp_cm": 1.5,
+    "ecart_final_cm": 1.6,
     "correction": [
-     0.044,
-     -0.152,
-     2.19
+     0.07,
+     -0.158,
+     2.78
     ],
     "icp_rms_cm": 2.1,
     "recouvrement": 0.96
@@ -194,11 +211,12 @@
    {
     "scan": "Scan 15",
     "ecart_avant_cm": 2.7,
-    "ecart_apres_cm": 1.5,
+    "ecart_icp_cm": 1.5,
+    "ecart_final_cm": 1.3,
     "correction": [
-     0.032,
      0.026,
-     0.28
+     0.029,
+     1.02
     ],
     "icp_rms_cm": 2.0,
     "recouvrement": 0.97
@@ -206,7 +224,8 @@
    {
     "scan": "Scan 16",
     "ecart_avant_cm": 2.9,
-    "ecart_apres_cm": 1.4,
+    "ecart_icp_cm": 1.4,
+    "ecart_final_cm": 1.3,
     "correction": [
      0.0,
      0.0,
@@ -218,11 +237,12 @@
    {
     "scan": "Scan 17",
     "ecart_avant_cm": 3.1,
-    "ecart_apres_cm": 1.3,
+    "ecart_icp_cm": 1.3,
+    "ecart_final_cm": 1.3,
     "correction": [
-     -0.01,
-     -0.001,
-     1.87
+     -0.011,
+     0.006,
+     2.26
     ],
     "icp_rms_cm": 2.3,
     "recouvrement": 0.97
@@ -241,17 +261,17 @@
   "scans": 16,
   "points": 6781,
   "grid": {
-   "cells": "318 x 289",
+   "cells": "317 x 288",
    "resolution_m": 0.05,
-   "occupied": 1460,
-   "free": 46412,
-   "unknown": 44030,
-   "explored_area_m2": 119.68
+   "occupied": 1387,
+   "free": 46309,
+   "unknown": 43600,
+   "explored_area_m2": 119.24
   },
   "vector": {
-   "segments": 30,
-   "total_length_m": 55.14,
-   "longest_m": 8.65
+   "segments": 25,
+   "total_length_m": 51.62,
+   "longest_m": 9.37
   }
  },
  "simulation": {

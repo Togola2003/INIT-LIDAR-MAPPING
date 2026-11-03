@@ -12,7 +12,7 @@
 | 1 | Récupérer les données brutes du LD06 | `lecons/01` à `05`, `src/lidar/scope/sources.py`, LidarScope | ✅ |
 | 1 | Extraire ses propres scans réels (polaire) | `data/salle/` : 16 scans | ✅ |
 | 2 | Afficher plusieurs scans en points cartésiens, couleurs distinctes | LidarScope, LidarStudio étape 1, `lidar.viewer` | ✅ |
-| 2 | Modifier la pose de chaque scan indépendamment | LidarStudio étape 3 (flèches + saisie), LidarScope onglet Captures | ✅ (+ recalage automatique ICP) |
+| 2 | Modifier la pose de chaque scan indépendamment | LidarStudio étape 3 et LidarScope : glisser / tourner à la souris, plusieurs scans à la fois, flèches, saisie | ✅ (+ recalage automatique ICP et global) |
 | 3 | Scan + pose → carte d'occupation | `gridmap.grid_from_scan`, LidarStudio étape 4 | ✅ |
 | 3 | Carte existante + scan + pose → carte mise à jour (traversées + impact) | `gridmap.update_grid`, curseur « pas à pas » de l'étape 4 | ✅ |
 | 4 | Nuage de points → segments | `extraction.py` (segmentation, split, ajustement, fusion) | ✅ |
@@ -55,9 +55,11 @@ pour réduire le bruit.
 ## 2. Visualisation des nuages de points
 
 **Outils.**
-- **LidarStudio**, étapes 1 à 3 : une couleur par scan, sélection d'un scan, déplacement à la main
-  (flèches, pas fin 1 cm / 0,5°, normal ou gros) ou saisie de (x, y, θ).
-- **LidarScope** : la même chose, en direct pendant l'acquisition.
+- **LidarStudio**, étapes 1 à 3 : une couleur par scan. On **glisse un scan à la souris** pour le déplacer et on le
+  **tourne au clic droit**, autour du centre de la sélection. Ctrl + clic sélectionne plusieurs scans, qui bougent alors
+  en bloc. On peut aussi utiliser les flèches, A / E pour tourner, Ctrl + molette pour ±1°, ou saisir (x, y, θ).
+  Ctrl+Z annule.
+- **LidarScope** : la même chose sur les captures, pendant l'acquisition.
 
 **Démarche.** Polaire → cartésien dans le repère du lidar (`x = r cos θ`, `y = r sin θ`), puis repère de la carte :
 `P = R(θr)·P_lidar + T(xr, yr)` (`geometry.py`).
@@ -74,24 +76,42 @@ J'ai implémenté un ICP point à point (`matching.py`), qui servira aussi au Jo
 Les scans sont recalés **un par un** sur la carte déjà construite, en partant du scan 16 (l'origine).
 Une correction n'est acceptée **que si elle améliore l'accord** avec la carte.
 
-| Mesure | Résultat |
-|---|---|
-| Validation en simulation (vérité connue, poses faussées de 10 à 25 cm et 5 à 8°) | erreur après ICP ≤ **0,6 cm** et ≤ **0,25°** |
-| Écart médian entre scans réels (distance de chaque point au scan voisin) | **6,4 cm → 3,2 cm** |
-| Scans nettement améliorés | 1, 2, 8, 9, 13, 14, 15, 17 (ex. scan 9 : 6,8 → 1,4 cm) |
-| Scans dégradés | 4 (4,4 → 8,2 cm), 7 (9,5 → 15,6 cm), 10 (9,2 → 10,8 cm) |
-| Scan non corrigeable | 3 : seulement 11 % de ses points recouvrent les autres scans |
-| Temps de calcul | environ 18 s pour 15 scans (Python, plus proches voisins en force brute) |
+**Amélioration (03/11) : recalage global.** Recaler les scans un par un a deux défauts : une erreur se propage au
+scan suivant, et un scan peut glisser le long d'un mur. J'ai donc ajouté `refine_global` (`matching.py`), qui
+corrige **toutes les poses en même temps** :
+- chaque point d'un scan est associé au point le plus proche de chacun des autres scans ;
+- l'erreur est la distance du point à la **droite du mur** (point à droite, normale calculée par ACP sur 7 voisins).
+  Un point peut donc glisser le long d'un mur sans être pénalisé ;
+- un seul système de moindres carrés (Gauss-Newton) donne les 3 × 16 inconnues (x, y, θ de chaque scan), avec le
+  scan 16 fixe, une pondération robuste (Cauchy) et un rappel faible vers la pose mesurée (σ = 0,5 m et 8°).
+  Ce rappel empêche un scan peu contraint de dériver ;
+- le « recalage complet » (`align_best`) essaie deux points de départ : les poses mesurées, et les poses après
+  l'ICP scan par scan. Il garde celui qui donne la carte la plus cohérente. Ici, c'est le départ depuis les
+  poses mesurées : l'ICP scan par scan avait fait glisser le scan 4.
+
+| Mesure | Poses mesurées | ICP scan par scan | **Recalage complet (global)** |
+|---|---|---|---|
+| Écart médian entre scans | 6,4 cm | 3,2 cm | **2,2 cm** |
+| Scan 4 / 7 / 10 | 4,4 / 9,5 / 9,2 cm | 8,2 / 15,6 / 10,8 cm (dégradés) | **2,7 / 7,1 / 3,6 cm** |
+| Cellules occupées (murs plus fins = mieux) | 1663 | 1458 | **1387** |
+| Segments de la carte vectorielle | 58 | 42 | **25** (murs plus doublés) |
+| Temps de calcul | — | 0,2 s | 1,3 s (deux départs) |
+| Simulation (vérité connue, 3 poses faussées) | — | ≤ 0,6 cm | **≤ 0,1 cm et 0,03°** |
+
+**Vitesse.** La recherche du plus proche voisin passe d'une force brute (O(n²)) à un arbre k-d (`scipy.spatial.cKDTree`).
+L'ICP de 15 scans passe de 13,7 s à 0,17 s. Le filtre de voisinage, le tracé des faisceaux (vectorisé) et la
+carte vectorielle (test rapide sur les boîtes englobantes) sont aussi 3 à 15 fois plus rapides.
 
 ![Fig. 3](figures/fig3_recalage_avant_apres.png)
 
 **Limites.**
-- **Glissement le long d'un mur :** un recalage scan par scan ne voit qu'une partie de la salle. Un long mur droit
-  ne contraint pas la position le long de lui-même, et l'ICP peut glisser dans cette direction.
-- **Deuxième passage global testé :** chaque scan recalé de nouveau sur tous les autres. Résultat : médiane
-  3,2 → 3,4 cm, sans gain, pour 53 s de calcul. Il a été abandonné.
-- **Conclusion :** il faut un recalage **global** (graphe de poses, Jour 3) ou des scans qui se recouvrent davantage.
-  En salle, il faudrait des positions plus rapprochées.
+- **Scan 3 :** il reste mal placé (20,9 cm), parce que seulement 11 % de ses points recouvrent les autres scans.
+  Aucun recalage automatique ne peut le corriger. Il faudrait le replacer à la main, ou refaire des scans plus
+  rapprochés en salle.
+- **Ce que mesure l'écart entre scans :** l'écart d'un scan qui voit une zone que personne d'autre ne voit
+  (scans 7 et 12) reste élevé, même s'il est bien placé. Ce n'est pas une erreur de pose mais une limite de la mesure.
+- **Pas de détection de boucle :** le recalage global fait un SLAM « hors ligne » simplifié, sans détection de
+  boucle ni incertitude par pose. Ce sera le sujet du Jour 3.
 
 ## 3. Construction d'une grid map 2D
 
@@ -99,7 +119,7 @@ Une correction n'est acceptée **que si elle améliore l'accord** avec la carte.
 
 1. **Grille.**
    - Résolution 5 cm (2 et 10 cm sont disponibles). C'est un compromis : environ 5 fois le bruit du LD06, et des
-     cellules assez fines pour les pieds de table. La grille fait 318 × 289 cellules, soit 92 000 cellules pour toute la salle.
+     cellules assez fines pour les pieds de table. La grille fait 317 × 288 cellules, soit 91 000 cellules pour toute la salle.
    - Valeur de chaque cellule : **log-odds** `L = ln(p/(1−p))`. La mise à jour bayésienne devient une addition.
    - État initial **inconnu** (L = 0) par défaut. Les variantes « libre » (optimiste) et « occupé » (pessimiste) sont proposées.
 2. **Points → cellules.** On passe en repère carte avec la pose, puis on calcule `i = ⌊(x − x0)/res⌋` et `j = ⌊(y − y0)/res⌋`.
@@ -190,13 +210,13 @@ aux erreurs d'arrondi des flottants.
    - Si au moins 3 faisceaux coupent une feature, elle est découpée avec `cut` et sa confiance baisse.
    - Cette étape se fait **avant** l'ajout des nouvelles observations : sinon, un mur revu en partie (porte ouverte)
      serait fusionné puis jamais raccourci.
-   - Le test d'intersection est vectorisé (numpy). La carte des 16 scans se construit en **0,6 s**.
+   - Le test d'intersection est vectorisé (numpy). La carte des 16 scans se construit en **0,08 s**.
 6. **Nettoyage :** fusion des features redondantes, suppression des features de confiance nulle ou trop courtes.
 
 | Résultat | Valeur |
 |---|---|
 | Simulation : écart des extrémités de segments aux vrais murs | médiane **0,6 cm**, max 1,5 cm |
-| Salle réelle (16 scans recalés) | **30 segments**, 55 m de murs, le plus long 8,65 m |
+| Salle réelle (16 scans, recalage complet) | **25 segments**, 51,6 m de murs, le plus long 9,37 m |
 
 ![Fig. 7](figures/fig7_carte_vectorielle.png)
 ![Fig. 8](figures/fig8_carte_finale.png)
@@ -206,10 +226,10 @@ aux erreurs d'arrondi des flottants.
 - La découpe « garde le plus long côté » est grossière : une porte ouverte au milieu d'un mur en supprime une moitié,
   alors qu'il faudrait scinder le mur en deux.
 - Les meubles donnent beaucoup de petits segments, filtrés par la longueur minimale.
-- La carte hérite des erreurs de pose des scans 3, 4, 7 et 10.
+- La carte hérite de l'erreur de pose du scan 3, le seul que le recalage ne corrige pas.
 
 ## Fichiers produits
 
 - `TP/Jour1/resultats/` : `grid_map_maptool.csv`, `grid_map_ternaire.csv`, `grid_map_proba.csv`,
   `carte_vectorielle.txt`, `metriques.json` (tous les chiffres de ce document).
-- `data/salle/session_salle_recalee.lidar.json` : les 16 scans avec les poses corrigées par ICP.
+- `data/salle/session_salle_recalee.lidar.json` : les 16 scans avec les poses corrigées (recalage complet).
