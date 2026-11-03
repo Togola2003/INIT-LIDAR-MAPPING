@@ -103,6 +103,38 @@ def points_to_segments(points: np.ndarray, ranges: np.ndarray | None = None,
     return segments
 
 
+@dataclass(frozen=True)
+class ExtractionStages:
+    """Résultat de chaque étape du document « carte vectorielle », pour les afficher une par une."""
+    clusters: list[np.ndarray]      # 1) segmentation : groupes de points contigus
+    pieces: list[np.ndarray]        # 2) split : morceaux à peu près rectilignes
+    rejected: list[np.ndarray]      #    morceaux écartés (trop peu de points / trop courts)
+    fitted: list[Segment]           # 3) ajustement : une droite par morceau
+    merged: list[Segment]           # 4) fusion des segments voisins alignés
+
+
+def extraction_stages(points: np.ndarray, ranges: np.ndarray | None = None,
+                      params: ExtractionParams = ExtractionParams()) -> ExtractionStages:
+    """Même algorithme que points_to_segments, mais en gardant les résultats intermédiaires."""
+    points = np.asarray(points, dtype=float)
+    ranges = np.zeros(len(points)) if ranges is None else ranges
+    clusters = cluster_points(points, ranges, params)
+    pieces, rejected, fitted, merged = [], [], [], []
+    for cluster in clusters:
+        for part in _split(cluster, params.split_tol_m):
+            seg = fit_segment(part) if len(part) >= 2 else None
+            if len(part) < params.min_points or seg is None or seg.length < params.min_length_m:
+                rejected.append(part)
+                continue
+            pieces.append(part)
+            fitted.append(seg)
+            if merged and are_close(merged[-1], seg, params.merge_angle_deg, params.merge_offset_m, params.merge_gap_m):
+                merged[-1] = merge(merged[-1], seg)
+            else:
+                merged.append(seg)
+    return ExtractionStages(clusters, pieces, rejected, fitted, merged)
+
+
 def scan_to_segments(scan: Scan, params: ExtractionParams = ExtractionParams(),
                      min_intensity: int = 0) -> list[Segment]:
     """Scan -> segments dans le repère CARTE (utilise la pose du scan)."""

@@ -19,3 +19,6 @@ out/
 Thumbs.db
 .DS_Store
 *.egg-info/
+
+# Dossier de travail local (exports bruts) : les données utiles sont copiées dans data/salle/
+aa/

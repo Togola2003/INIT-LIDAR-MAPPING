@@ -11,18 +11,46 @@ from ..scan import Scan
 DIRECTIONS = (("Devant", 0), ("Gauche", 90), ("Derrière", 180), ("Droite", 270))
 
 
+def isolated_mask(points: np.ndarray, radius: float, min_neighbors: int) -> np.ndarray:
+    """True pour les points qui ont MOINS de min_neighbors voisins à moins de radius.
+
+    Filtre « de voisinage » : un vrai mur donne des points serrés, un reflet ou un passant
+    donne souvent des points isolés. Fonctionne sans l'intensité (données Teleplot).
+    """
+    if min_neighbors <= 0 or len(points) == 0:
+        return np.zeros(len(points), dtype=bool)
+    counts = np.empty(len(points), dtype=int)
+    for k in range(0, len(points), 256):
+        d2 = ((points[k:k + 256, None, :] - points[None, :, :]) ** 2).sum(axis=2)
+        counts[k:k + 256] = (d2 <= radius ** 2).sum(axis=1) - 1   # -1 : le point lui-même
+    return counts < min_neighbors
+
+
 @dataclass(frozen=True)
 class Filters:
     """Filtres d'AFFICHAGE et d'analyse. Les exports gardent toujours les mesures brutes."""
     min_range_m: float = 0.05
     max_range_m: float = 12.0
     min_intensity: int = 0
+    min_neighbors: int = 0          # 0 = filtre de voisinage désactivé
+    neighbor_radius_m: float = 0.15
 
     def apply(self, scan: Scan) -> Scan:
-        return scan.filtered(self.min_range_m, self.max_range_m, self.min_intensity)
+        s = scan.filtered(self.min_range_m, self.max_range_m, self.min_intensity)
+        if self.min_neighbors <= 0:
+            return s
+        keep = ~isolated_mask(s.local_points(), self.neighbor_radius_m, self.min_neighbors)
+        return replace(s, angles_deg=s.angles_deg[keep], ranges_m=s.ranges_m[keep], intensities=s.intensities[keep])
+
+    def rejected(self, scan: Scan) -> Scan:
+        """Points écartés par le filtre de voisinage (pour les montrer en rouge)."""
+        s = scan.filtered(self.min_range_m, self.max_range_m, self.min_intensity)
+        bad = isolated_mask(s.local_points(), self.neighbor_radius_m, self.min_neighbors)
+        return replace(s, angles_deg=s.angles_deg[bad], ranges_m=s.ranges_m[bad], intensities=s.intensities[bad])
 
     def as_dict(self) -> dict:
-        return {"min_range_m": self.min_range_m, "max_range_m": self.max_range_m, "min_intensity": self.min_intensity}
+        return {"min_range_m": self.min_range_m, "max_range_m": self.max_range_m, "min_intensity": self.min_intensity,
+                "min_neighbors": self.min_neighbors, "neighbor_radius_m": self.neighbor_radius_m}
 
 
 def _angle_gap(a: np.ndarray, b: float | np.ndarray) -> np.ndarray:
