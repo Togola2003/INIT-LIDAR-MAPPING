@@ -66,7 +66,8 @@ docs/               mode d'emploi des outils, notes d'algorithmes
 
 ── Partie B : réalisation du TP ───────────────────────────────────────────────
 TP/                 comptes rendus par jour, figures, résultats, conclusion (livrable)
-data/salle/         mes 16 scans réels de la salle (bruts + poses corrigées)
+data/salle/         mes 16 scans réels du 02/11 (bruts + poses corrigées)
+data/salle_jour2/   13 scans du 03/11 (9 avec intensité), poses recalées : référence du Jour 2
 JOURNAL.md          traçabilité : quoi, quand, quel commit
 ```
 

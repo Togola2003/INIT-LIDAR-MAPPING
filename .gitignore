@@ -10,7 +10,8 @@ Cartographie-*/
 Localisation-*/
 TP LIDAR.pdf
 
-# Sorties générées (cartes, images) : on les régénère à partir des scans
+# Sorties générées et exports bruts de LidarScope / LidarStudio : les données utiles sont copiées
+# dans data/ (salle/ = 02/11, salle_jour2/ = 03/11), tout le reste se régénère
 out/
 
 # Fichiers éditeur / système
@@ -19,6 +20,3 @@ out/
 Thumbs.db
 .DS_Store
 *.egg-info/
-
-# Dossier de travail local (exports bruts) : les données utiles sont copiées dans data/salle/
-aa/
