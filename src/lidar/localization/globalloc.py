@@ -11,6 +11,8 @@ d'un camarade de TP, réécrite en Python avec numpy) :
      pas rater la bonne pose entre deux pas), avec 150 points du scan ;
   4. les 6 meilleures poses distinctes sont affinées (multi-résolution locale + gradient) et classées
      par la part des points du scan à moins de 5 cm d'un mur ;
+     Si la meilleure a moins de 60 % de ses points sur les murs, on recommence avec TOUTES les
+     orientations (tous les 3°) : plus lent (≈ 2 s) mais on ne rate plus une orientation inattendue ;
   5. confiance : on compare la 1re et la 2e candidate sur les seuls points qui les départagent.
      Si la 2e en explique presque autant, la salle est ambiguë vue d'ici (symétrie, couloir) : on le dit.
 """
@@ -36,6 +38,8 @@ SEPARATION_M, SEPARATION_DEG = 0.5, 10.0
 SPREAD_DEG = 4.0
 ON_MAP_M = 0.05
 AMBIGUITY = 0.5
+SURE = 0.6            # en dessous (part des points sur les murs), on refait la recherche avec toutes les orientations
+FULL_STEP_DEG = 3.0
 
 
 @dataclass(frozen=True)
@@ -118,31 +122,16 @@ def global_localize(points_local: np.ndarray, grid: OccupancyGrid, segments=(), 
         field = field or LikelihoodField.from_grid(grid)
         pyramid = pyramid or build_pyramid(field)
         coarse = replace(field.coarser(2), sigma=COARSE_SIGMA)
-        lik = coarse.likelihood
         positions = free_positions(grid, field)
         angles, mode = candidate_angles(points_local, map_direction(list(segments)))
-        pts = subsample(points_local, SEARCH_POINTS)
-        ny, nx = lik.shape
-        scores = np.zeros((len(angles), len(positions)))
-        for a, th in enumerate(np.radians(angles)):
-            c, s = np.cos(th), np.sin(th)
-            rot = pts @ np.array([[c, s], [-s, c]])
-            world = positions[:, None, :] + rot[None, :, :]                       # (P, N, 2)
-            ij = np.floor((world - np.array(coarse.origin)) / coarse.resolution).astype(int)
-            ok = (ij[..., 0] >= 0) & (ij[..., 0] < nx) & (ij[..., 1] >= 0) & (ij[..., 1] < ny)
-            val = np.where(ok, lik[np.clip(ij[..., 1], 0, ny - 1), np.clip(ij[..., 0], 0, nx - 1)], 0.0)
-            scores[a] = val.mean(axis=1)
-        flat = scores.ravel()
-        top = np.argsort(flat)[::-1][:3000]
-        ranked = [(float(flat[k]), Pose(float(positions[k % len(positions), 0]), float(positions[k % len(positions), 1]),
-                                        float(angles[k // len(positions)]))) for k in top]
-        refined = []
-        for _, p in _distinct(ranked, CANDIDATES):
-            m = multiresolution(points_local, p, field, window_m=1.5 * STEP_M,
-                                window_deg=SPREAD_DEG + 2 if mode == "murs" else 4.0, pyramid=pyramid)
-            g = gradient(points_local, m.pose, field)
-            best = g.pose if _on_map(field, points_local, g.pose).mean() >= _on_map(field, points_local, m.pose).mean() else m.pose
-            refined.append((float(_on_map(field, points_local, best).mean()), best))
+        refined = _refine(points_local, field, pyramid, coarse, positions, angles, mode)
+        n_angles = len(angles)
+        if mode == "murs" and max(r[0] for r in refined) < SURE:
+            # les murs n'ont pas suffi à trouver une pose nette : on teste TOUTES les orientations
+            all_angles = np.arange(-180.0, 180.0, FULL_STEP_DEG)
+            refined += _refine(points_local, field, pyramid, coarse, positions, all_angles, "tous")
+            n_angles += len(all_angles)
+            mode = "murs + tous"
         refined.sort(key=lambda r: -r[0])
         distinct = _distinct(refined, CANDIDATES)
         evidence, ambiguous = (0, 0), False
@@ -153,4 +142,32 @@ def global_localize(points_local: np.ndarray, grid: OccupancyGrid, segments=(), 
             ambiguous = evidence[0] < 8 or evidence[1] >= AMBIGUITY * max(evidence[0], 1)
     best_in, best = distinct[0]
     return GlobalResult(best, best_in, [(p, i) for i, p in distinct], ambiguous, evidence, len(positions),
-                        len(angles), mode, tm.elapsed)
+                        n_angles, mode, tm.elapsed)
+
+
+def _refine(points_local, field, pyramid, coarse, positions, angles, mode) -> list[tuple[float, Pose]]:
+    """Note toutes les (position, orientation) sur le champ lissé, puis affine les meilleures distinctes."""
+    lik = coarse.likelihood
+    pts = subsample(points_local, SEARCH_POINTS)
+    ny, nx = lik.shape
+    scores = np.zeros((len(angles), len(positions)))
+    for a, th in enumerate(np.radians(angles)):
+        c, s = np.cos(th), np.sin(th)
+        rot = pts @ np.array([[c, s], [-s, c]])
+        world = positions[:, None, :] + rot[None, :, :]                       # (P, N, 2)
+        ij = np.floor((world - np.array(coarse.origin)) / coarse.resolution).astype(int)
+        ok = (ij[..., 0] >= 0) & (ij[..., 0] < nx) & (ij[..., 1] >= 0) & (ij[..., 1] < ny)
+        val = np.where(ok, lik[np.clip(ij[..., 1], 0, ny - 1), np.clip(ij[..., 0], 0, nx - 1)], 0.0)
+        scores[a] = val.mean(axis=1)
+    flat = scores.ravel()
+    top = np.argsort(flat)[::-1][:3000]
+    ranked = [(float(flat[k]), Pose(float(positions[k % len(positions), 0]), float(positions[k % len(positions), 1]),
+                                    float(angles[k // len(positions)]))) for k in top]
+    refined = []
+    for _, p in _distinct(ranked, CANDIDATES):
+        m = multiresolution(points_local, p, field, window_m=1.5 * STEP_M,
+                            window_deg=SPREAD_DEG + 2 if mode == "murs" else FULL_STEP_DEG + 2, pyramid=pyramid)
+        g = gradient(points_local, m.pose, field)
+        best = g.pose if _on_map(field, points_local, g.pose).mean() >= _on_map(field, points_local, m.pose).mean() else m.pose
+        refined.append((float(_on_map(field, points_local, best).mean()), best))
+    return refined
