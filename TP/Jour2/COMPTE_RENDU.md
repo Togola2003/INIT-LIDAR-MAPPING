@@ -9,6 +9,42 @@
 - **Reproduire tous les chiffres et toutes les figures :** `.venv/Scripts/python TP/Jour2/banc_essai.py`
   (6 240 localisations, environ 2 min 40 s).
 
+## Comment ce travail a été fait : hors ligne, à partir des scans déjà enregistrés
+
+La localisation du Jour 2 a été réalisée **en Python, sur le PC, à partir des scans déjà enregistrés en salle**
+(ceux qui ont servi à construire la carte). Le robot n'a pas été déplacé de nouveau pour prendre des scans en temps
+réel.
+
+**Pourquoi.** Pour mesurer l'erreur d'une méthode, il faut connaître la bonne réponse. Les poses de nos scans
+enregistrés sont connues, à 2,4 cm près, grâce au recalage du Jour 1 ; celles d'un nouveau scan ne le seraient pas.
+On a donc joué un contrôle où l'on cache la réponse :
+
+1. on prend un scan dont on connaît la pose ;
+2. on construit la carte avec **les 12 autres scans seulement**, pour que le scan testé n'aide pas à construire sa
+   propre référence ;
+3. on fausse volontairement sa pose de départ (de 10 cm / 5° jusqu'à 1 m / 30°) ;
+4. on lance la méthode de localisation, puis on compare la pose trouvée à la pose connue.
+
+On recommence pour chaque scan, chaque erreur de départ et chaque méthode, soit 6 240 essais. Le même contrôle est
+fait **en simulation**, où la vraie pose est exacte.
+
+**Méthodes utilisées**, celles du cours « Scan matching » :
+- recherche exhaustive ;
+- multi-résolution ;
+- gradient (Gauss-Newton) ;
+- calcul direct (Kabsch).
+
+Elles sont appliquées aux trois références : grid map, carte vectorielle, scan voisin. La méthode probabiliste
+(filtre de particules) n'a pas été faite.
+
+**Avec le robot en temps réel (prévu dans l'application finale).** Le calcul sera exactement le même :
+1. le robot est posé dans la salle, et l'application reçoit son scan (par câble série, ou plus tard par Wi-Fi) ;
+2. l'utilisateur indique une position approximative, ou bien elle est déduite des commandes de déplacement ;
+3. l'étape *Localiser* de l'application aligne ce scan sur la carte et affiche la position trouvée.
+
+Le robot (ESP32, code Arduino) ne calcule rien : il envoie ses points, et tout le calcul est fait en Python sur
+le PC.
+
 ## Synthèse des attendus
 
 | Attendu de l'énoncé | Réalisation | État |

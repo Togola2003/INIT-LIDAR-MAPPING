@@ -2,6 +2,11 @@
 
 **Compte rendu : [COMPTE_RENDU.md](COMPTE_RENDU.md).** Ce fichier garde le plan de départ.
 
+> **Important :** la localisation a été faite **hors ligne, en Python**, sur les scans déjà enregistrés (ceux de la carte).
+> On cache la pose d'un scan, on le relocalise sur la carte des autres et on compare. Le robot n'a pas été redéplacé
+> en temps réel. La même localisation, avec le robot en direct, est prévue dans l'étape *Localiser* de l'application
+> finale (voir plus bas).
+
 **Question à résoudre :** un scan et une pose approximative étant donnés, retrouver la vraie pose (x, y, θ) du robot
 en alignant le scan sur une **référence**, puis comparer les méthodes avec des chiffres.
 
@@ -40,6 +45,11 @@ en alignant le scan sur une **référence**, puis comparer les méthodes avec de
    en fonction de l'erreur initiale ».
 
 ## Plus tard (Jour 3), préparé mais pas développé maintenant
+
+- **Application finale unique**, en 6 étapes : récolter → nettoyer → recaler → cartes (avec retouches à la main) →
+  **localiser** → exporter. Elle aura un bouton « Nouveau projet » qui vide tout, et une interface soignée (claire,
+  aérée, lisible) pour montrer et faire comprendre chaque étape du cours. L'étape *Localiser* appellera
+  `src/lidar/localization/` sur un scan reçu du robot en direct.
 
 - **Pilotage Wi-Fi :** le firmware RobotControl (`/forward?time=…`, `/rotateleft`, `/scan` binaire, `/pose`)
   sera piloté par un client Python (`src/lidar/robot/`), puis par un onglet *Pilotage* dans LidarScope, avec une

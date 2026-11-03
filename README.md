@@ -33,7 +33,7 @@ Le dépôt contient **deux choses différentes** qui servent le même objectif :
 | Afficher les données du lidar en nuages de points | ✅ | LidarScope, LidarStudio, [Fig. 1](TP/Jour1/figures/fig1_nuages_poses_manuelles.png) |
 | Construire une carte d'occupation (grid map) | ✅ | [Fig. 4-5](TP/Jour1/figures/fig5_gridmap_mise_a_jour.png), `src/lidar/gridmap.py` |
 | Nuages de points → segments → carte vectorielle | ✅ | [Fig. 6-7](TP/Jour1/figures/fig7_carte_vectorielle.png), `segments.py`, `vectormap.py` |
-| Localisation sur grid map / carte vectorielle / scan de référence | ✅ | 10 méthodes comparées, 99 % de réussite sur scans réels ([Jour 2](TP/Jour2/COMPTE_RENDU.md)) |
+| Localisation sur grid map / carte vectorielle / scan de référence | ✅ | 10 méthodes comparées **hors ligne sur les scans enregistrés** : 99 % de réussite ([Jour 2](TP/Jour2/COMPTE_RENDU.md)) ; en direct avec le robot : prévu dans l'appli finale |
 | Cartographier la salle et y localiser le robot | 🟡 | carte complète de 16 scans réels, recalée à 2,2 cm près |
 | Utiliser git | ✅ | commits réguliers, [JOURNAL.md](JOURNAL.md), tags par jour |
 
