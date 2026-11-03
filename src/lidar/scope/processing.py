@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from ..scan import Scan
 
@@ -24,11 +25,8 @@ def isolated_mask(points: np.ndarray, radius, min_neighbors: int) -> np.ndarray:
     """
     if min_neighbors <= 0 or len(points) == 0:
         return np.zeros(len(points), dtype=bool)
-    r2 = np.broadcast_to(np.asarray(radius, dtype=float) ** 2, (len(points),))
-    counts = np.empty(len(points), dtype=int)
-    for k in range(0, len(points), 256):
-        d2 = ((points[k:k + 256, None, :] - points[None, :, :]) ** 2).sum(axis=2)
-        counts[k:k + 256] = (d2 <= r2[k:k + 256, None]).sum(axis=1) - 1   # -1 : le point lui-même
+    r = np.broadcast_to(np.asarray(radius, dtype=float), (len(points),))
+    counts = cKDTree(points).query_ball_point(points, r, return_length=True) - 1   # -1 : le point lui-même
     return counts < min_neighbors
 
 

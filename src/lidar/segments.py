@@ -106,6 +106,12 @@ def are_close(
       la plus fiable) ;
     - et ils se recouvrent ou sont séparés de moins de max_gap_m dans le sens de la longueur.
     """
+    # test rapide d'abord : des boîtes englobantes trop éloignées ne peuvent pas être « proches »
+    # (évite tous les calculs pour la grande majorité des paires d'une carte)
+    margin = max_offset_m + max_gap_m
+    if (min(s1.x1, s1.x2) - max(s2.x1, s2.x2) > margin or min(s2.x1, s2.x2) - max(s1.x1, s1.x2) > margin or
+            min(s1.y1, s1.y2) - max(s2.y1, s2.y2) > margin or min(s2.y1, s2.y2) - max(s1.y1, s1.y2) > margin):
+        return False
     if angle_between(s1, s2) > max_angle_deg:
         return False
     longest, other = (s1, s2) if s1.length >= s2.length else (s2, s1)

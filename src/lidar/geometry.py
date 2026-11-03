@@ -47,3 +47,15 @@ def local_to_global(points: np.ndarray, pose: Pose) -> np.ndarray:
     c, s = np.cos(pose.theta), np.sin(pose.theta)
     rot = np.array([[c, -s], [s, c]])
     return np.asarray(points, dtype=float) @ rot.T + np.array([pose.x, pose.y])
+
+
+def move_rigid(pose: Pose, dx: float = 0.0, dy: float = 0.0, dtheta_deg: float = 0.0,
+               pivot: tuple[float, float] | None = None) -> Pose:
+    """Déplace une pose comme un objet solide : rotation de dtheta autour de 'pivot' (par défaut la
+    pose elle-même), puis translation (dx, dy). Sert à tourner plusieurs scans ENSEMBLE autour de
+    leur centre commun : chaque scan tourne sur lui-même ET autour du pivot, le groupe reste rigide."""
+    cx, cy = (pose.x, pose.y) if pivot is None else pivot
+    a = np.deg2rad(dtheta_deg)
+    c, s = np.cos(a), np.sin(a)
+    x, y = pose.x - cx, pose.y - cy
+    return Pose(float(cx + c * x - s * y + dx), float(cy + s * x + c * y + dy), pose.theta_deg + dtheta_deg)
