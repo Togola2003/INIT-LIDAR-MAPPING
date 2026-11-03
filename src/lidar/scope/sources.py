@@ -172,6 +172,52 @@ class DemoSource(threading.Thread):
         self.out.put(Event("status", "Démo arrêtée"))
 
 
+class MapDemoSource(threading.Thread):
+    """Démo de la localisation en temps réel : un robot simulé roule dans UNE CARTE DONNÉE (les murs de
+    la carte de référence) en passant par des points de passage, et envoie ses scans comme le vrai
+    robot (printScanCSV, ~4 scans/s). Sa vraie pose est lisible dans `truth` pour mesurer l'erreur."""
+
+    def __init__(self, out: queue.Queue, walls, waypoints, speed_m_s: float = 0.25, rate_hz: float = 4.0) -> None:
+        super().__init__(daemon=True)
+        self.out, self.walls, self.waypoints = out, list(walls), list(waypoints)
+        self.speed, self.period = speed_m_s, 1.0 / rate_hz
+        self.truth: Pose | None = None
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _route(self):
+        """Poses successives le long des points de passage (aller-retour), orientées dans le sens de la marche."""
+        pts = self.waypoints + self.waypoints[-2:0:-1]
+        step = self.speed * self.period
+        while True:
+            for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+                d = math.hypot(x1 - x0, y1 - y0)
+                th = math.degrees(math.atan2(y1 - y0, x1 - x0))
+                for k in range(max(1, int(d / step))):
+                    t = k * step / max(d, 1e-9)
+                    yield Pose(x0 + t * (x1 - x0), y0 + t * (y1 - y0), th)
+
+    def run(self) -> None:
+        from ..simulate import simulate_scan
+
+        parser = LineParser()
+        self.out.put(Event("status", "Démo sur la carte : robot simulé dans la salle validée"))
+        for k, pose in enumerate(self._route()):
+            if self._stop.is_set():
+                break
+            scan = simulate_scan(pose, walls=self.walls, noise_m=0.01, seed=k)
+            self.truth = pose
+            for n, (a, r, i) in enumerate(zip(scan.angles_deg, scan.ranges_m, scan.intensities)):
+                for ev in parser.feed(f"{n},{a:.2f},{r * 1000:.0f},{i:.0f}"):
+                    self.out.put(ev)
+            for ev in parser.feed(""):
+                self.out.put(ev)
+            time.sleep(self.period)
+        self.out.put(Event("status", "Démo arrêtée"))
+
+
 def list_ports() -> list[str]:
     try:
         from serial.tools import list_ports as lp

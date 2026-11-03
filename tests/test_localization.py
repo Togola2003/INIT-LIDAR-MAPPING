@@ -78,3 +78,22 @@ def test_global_localization_without_initial_pose():
     pos, ang = pose_error(res.pose, truth)
     assert pos < 0.05 and ang < 2.0
     assert res.inliers > 0.6 and not res.ambiguous and res.positions > 50
+
+
+def test_tracker_follows_a_moving_robot():
+    from lidar.localization.tracking import Tracker
+    from lidar.refmap import build_reference
+    walls = [(0, 0, 6, 0), (6, 0, 6, 4), (6, 4, 0, 4), (0, 4, 0, 0), (1, 1, 2.2, 1), (2.2, 1, 2.2, 1.6),
+             (4.2, 2.6, 5, 2.6), (5, 2.6, 5, 3.3)]
+    maps = [simulate_scan(p, walls=walls, noise_m=0.005, seed=k).filtered()
+            for k, p in enumerate([Pose(1, 3, 0), Pose(3, 2, 45), Pose(5, 1, 100), Pose(4, 3.4, -90)])]
+    ref = build_reference(maps, ["a", "b", "c", "d"])
+    tracker = Tracker(ref.grid, ref.segments)
+    modes = []
+    for k in range(8):                                    # le robot avance de 15 cm et tourne de 3° par scan
+        truth = Pose(1.5 + 0.15 * k, 2.2, 10 + 3 * k)
+        step = tracker.update(simulate_scan(truth, walls=walls, noise_m=0.01, seed=20 + k).filtered().local_points())
+        pos, ang = pose_error(step.pose, truth)
+        assert pos < 0.05 and ang < 2.0
+        modes.append(step.mode)
+    assert modes[0] == "global" and set(modes[1:]) == {"suivi"} and len(tracker.trail) == 8
