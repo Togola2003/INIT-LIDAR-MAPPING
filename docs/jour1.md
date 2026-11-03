@@ -1,5 +1,8 @@
 # TP Jour 1 : extraction, visualisation et cartographie
 
+> **Version initiale (02/11).** Le compte rendu à jour, avec les résultats sur les scans réels, est
+> [TP/Jour1/COMPTE_RENDU.md](../TP/Jour1/COMPTE_RENDU.md).
+
 Ce document explique la démarche suivie à chaque étape : choix techniques, hypothèses, difficultés et limites.
 Le code est dans `src/lidar/`, les tests dans `tests/`.
 
