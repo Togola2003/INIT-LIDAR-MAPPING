@@ -41,11 +41,11 @@ Une fenêtre, trois zones :
 
 | Étape | Ce qu'on y fait |
 |---|---|
-| 1 Récolter | câble USB ou démo (Wi-Fi : Jour 3). Clic sur la carte = pose du robot. **C** récolte N tours, puis aperçu : garder (Entrée), refaire ou jeter (Échap). Import de fichiers |
+| 1 Récolter | câble USB, **Wi-Fi** (réseau « RobotESP32 », 192.168.4.1, pilotage I K J L U O, Espace = stop) ou démo. Clic sur la carte = pose du robot. **C** récolte N tours, puis aperçu : garder (Entrée), refaire ou jeter (Échap). Import de fichiers |
 | 2 Nettoyer | filtres du cours (portée, intensité, points isolés). Suppr = supprimer les scans sélectionnés |
 | 3 Recaler | glisser = déplacer, clic droit glissé = tourner, flèches / A E, plusieurs scans en bloc. **Recalage complet**, ICP en bloc, cohérence |
 | 4 Cartes | grid map et carte vectorielle, **retouches comprises**. **✓ Valider cette carte comme référence** : elle est figée et sert à la localisation |
-| 5 Localiser | **Un scan du projet** : sans pose de départ, recherche dans toute la carte (globale), puis affinage ; ou pose approximative (clic). **Le robot en direct** : suivi en temps réel du robot (ou de la démo qui roule dans ta carte). Avancé : référence, méthode, comparaison, contrôle sans le scan |
+| 5 Localiser | **Scan de la liste** : un clic sur un scan dans la liste à gauche le localise aussitôt sur la carte de référence (recherche globale, sans pose de départ), gris = pose connue, vert = replacé. **Fichier importé** : un scan hors projet. **Robot en direct** : Wi-Fi, câble ou démo, suivi en temps réel + pilotage. Avancé : référence, méthode, comparaison, pose de départ, contrôle sans le scan |
 | 6 Exporter | projet `.lidar.json` (retouches comprises), dossier complet, image PNG, carte vectorielle `.txt` |
 
 - **Toujours disponibles :**

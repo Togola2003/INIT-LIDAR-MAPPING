@@ -33,6 +33,7 @@ Liste complète des commits : `git log --oneline` ; versions de fin d'étape : `
 | après-midi | **Localisation, étape 1 :** grid map, champ de vraisemblance. Gradient seul (précis mais coincé quand on part de loin), puis recherche exhaustive et multi-résolution (robustes), puis la combinaison | voir `git log` |
 | après-midi | **Étape 2 :** carte vectorielle (Gauss-Newton, calcul direct). **Étape 3 :** entre scans (ICP point à point, point à droite) | voir `git log` |
 | après-midi | **Étape 4 :** banc d'essai commun (6 240 localisations), critère de zone couverte, compte rendu du Jour 2 | `9f24a06` → `beeac38` |
+| soir (3) | Localiser refaite selon le TP : clic sur un scan de la liste = localisation globale immédiate, fichier importé, robot en direct ; **robot en Wi-Fi** (scans + pilotage, protocole RobotControl) ; plus de clic piège sur la carte | voir `git log` |
 | soir (2) | Retours de test : **localisation globale** sans pose de départ (idée reprise de l'appli ld06-slam d'un camarade), **suivi en temps réel** + démo qui roule dans la carte, **carte de référence validée**, retouches appliquées aux deux cartes, outils dans la barre de la carte | voir `git log` |
 | soir | **LidarLab**, l'application unique : récolter, nettoyer (gomme), recaler, cartes (retouches des murs), **localiser** (référence + méthode au choix), exporter. Style clair, Nouveau projet, Ctrl+Z | voir `git log` |
 

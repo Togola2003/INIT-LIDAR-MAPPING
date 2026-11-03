@@ -195,6 +195,21 @@ donnés quand même : c'est là que les taux plafonnent vers 77 %.
     « multi-résolution + gradient » ;
   - en faire un SLAM qui agrandit la carte au fur et à mesure.
 
+## 7. Ajout : localisation globale et en temps réel (dans LidarLab)
+
+Les méthodes ci-dessus cherchent **autour d'une pose de départ**. Pour l'usage voulu par le TP, il faut aussi
+pouvoir retrouver un scan **sans pose de départ**, puis suivre le robot qui bouge :
+- on a une carte de référence, figée ;
+- on y replace des scans de la liste ou importés ;
+- on y suit le robot en direct.
+
+| Ajout | Principe | Résultat |
+|---|---|---|
+| Carte de référence validée (`refmap.py`) | la grid map et les murs, retouches à la main comprises, figés et enregistrés dans le projet | même carte pour toutes les localisations |
+| Localisation globale (`localization/globalloc.py`) | positions = cases libres tous les 20 cm, orientations tirées de la direction des murs, score sur un champ lissé, 6 meilleures poses affinées, confiance par les points qui départagent les deux meilleures. Idée reprise de l'appli ld06-slam d'un camarade, réécrite en Python | **10 scans réels sur 13 replacés à moins de 1,2 cm**, en 0,7 s. Les 3 autres voient surtout des meubles (21 à 30 % de points sur les murs) : ils sont signalés « ambiguë » ou « faible » au lieu de recevoir une pose fausse |
+| Suivi en temps réel (`localization/tracking.py`) | 1er tour en global, puis recherche autour de la pose précédente (± 60 cm, ± 20°), et retour en global si moins de 35 % des points sont sur les murs | démo dans la carte : erreur médiane 2,1 cm. Robot Wi-Fi simulé et piloté (protocole RobotControl) : **1,1 cm**, ≈ 15 ms par tour |
+| Robot en Wi-Fi (`robot.py`) | lecture de `/scan` (binaire) et commandes `/forward?time=…`, comme RobotControl | testé contre un faux robot HTTP ; **reste à tester avec le vrai robot** |
+
 ## Fichiers produits
 
 - `resultats/essais.csv` : les 6 240 localisations, une ligne chacune (jeu, scan, couverture, niveau, méthode,
