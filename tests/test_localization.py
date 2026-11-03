@@ -4,6 +4,8 @@ import pytest
 from lidar.geometry import Pose
 from lidar.localization import METHODS, References, localize, pose_error
 from lidar.localization.grid import LikelihoodField
+from lidar.localization.vector import SegmentMap
+from lidar.segments import Segment
 from lidar.simulate import simulate_scan
 
 MAP_POSES = [Pose(0.8, 0.8, 0), Pose(2.8, 1.2, 90), Pose(1.2, 2.3, -45), Pose(3.2, 2.5, 180)]
@@ -44,6 +46,13 @@ def test_likelihood_field_distances_and_pyramid():
     assert c.resolution == pytest.approx(0.10) and c.occupied.shape == (10, 10) and c.occupied[5].all()
     on_wall = np.array([[0.30, 0.525], [0.6, 0.525]])
     assert f.score(on_wall) > 0.9 and f.score(on_wall + [0, 0.4]) < 0.01
+
+
+def test_segment_map_distance_and_feet():
+    segmap = SegmentMap.from_segments([Segment(0, 0, 2, 0), Segment(2, 0, 2, 1)])
+    d, feet = segmap.nearest(np.array([[1.0, 0.3], [3.0, 0.5], [-1.0, 0.0]]))
+    assert d == pytest.approx([0.3, 1.0, 1.0])
+    assert feet[1] == pytest.approx([2.0, 0.5]) and feet[2] == pytest.approx([0.0, 0.0])
 
 
 def test_pose_error_wraps_angles():

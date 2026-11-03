@@ -17,6 +17,7 @@ from ..scan import Scan
 from ..segments import Segment
 from ..vectormap import VectorMapParams, build_vector_map
 from . import grid as G
+from . import vector as V
 from .common import LocResult, pose_error
 
 
@@ -25,6 +26,9 @@ class References:
     """Les trois références, préparées une fois (champ de vraisemblance, pyramide, index des segments)."""
     field: G.LikelihoodField | None = None
     pyramid: dict | None = None
+    segmap: V.SegmentMap | None = None
+    seg_field: G.LikelihoodField | None = None
+    seg_pyramid: dict | None = None
 
     @staticmethod
     def build(map_scans: list[Scan] | None = None, segments: list[Segment] | None = None,
@@ -41,6 +45,10 @@ class References:
             kw["pyramid"] = G.build_pyramid(kw["field"])
             if segments is None:
                 segments = build_vector_map(map_scans, vector_params or VectorMapParams()).segments
+        if segments:
+            kw["segmap"] = V.SegmentMap.from_segments(segments)
+            kw["seg_field"] = G.LikelihoodField.from_points(kw["segmap"].sample(), resolution)
+            kw["seg_pyramid"] = G.build_pyramid(kw["seg_field"])
         return References(**kw)
 
 
@@ -54,6 +62,10 @@ METHODS: dict[str, tuple[str, Method]] = {
     "grid · gradient": ("field", lambda p, i, r: G.gradient(p, i, r.field)),
     "grid · multi-résolution + gradient": ("field", lambda p, i, r: G.multiresolution_gradient(
         p, i, r.field, pyramid=r.pyramid)),
+    "vecteur · Gauss-Newton": ("segmap", lambda p, i, r: V.gauss_newton_method(p, i, r.segmap)),
+    "vecteur · calcul direct": ("segmap", lambda p, i, r: V.direct(p, i, r.segmap)),
+    "vecteur · multi-résolution + Gauss-Newton": ("segmap", lambda p, i, r: V.multiresolution_gauss_newton(
+        p, i, r.segmap, r.seg_field, r.seg_pyramid)),
 }
 
 
