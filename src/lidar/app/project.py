@@ -139,6 +139,12 @@ def open_files(project: Project, paths: list[str]) -> tuple[Project, list[int], 
     return project, added, errors
 
 
+def replace_name(project: Project, path: str) -> Project:
+    """Le projet prend le nom du fichier ouvert, sans s'y attacher : « Enregistrer » demandera où écrire
+    (on n'écrase jamais par accident un jeu de données de référence)."""
+    return replace(project, name=Path(path).name.split(".")[0])
+
+
 def save(project: Project, path: str, extra: dict | None = None) -> Project:
     info = {"projet": project.name}
     if project.manual_segments is not None:
