@@ -23,7 +23,7 @@ import numpy as np
 
 from .extraction import ExtractionParams, scan_to_segments
 from .scan import Scan
-from .segments import Segment, are_close, cut, intersection, merge
+from .segments import EPS, Segment, are_close, cut, merge
 
 
 @dataclass(frozen=True)
@@ -72,10 +72,30 @@ def _beams(scan: Scan, margin: float) -> list[Segment]:
     return [Segment.from_points(o, q) for q in shortened.global_points()]
 
 
+def _crossing_mask(seg: Segment, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+    """Même test que segments.intersection, mais pour TOUS les faisceaux d'un coup (numpy)."""
+    v1 = seg.vector
+    v2 = ends - starts
+    den = v1[0] * v2[:, 1] - v1[1] * v2[:, 0]
+    w = starts - seg.p1
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = (w[:, 0] * v2[:, 1] - w[:, 1] * v2[:, 0]) / den
+        u = (w[:, 0] * v1[1] - w[:, 1] * v1[0]) / den
+    lengths = np.hypot(v2[:, 0], v2[:, 1])
+    parallel = np.abs(den) <= EPS * np.maximum(seg.length * lengths, EPS)
+    tol1 = EPS / max(seg.length, EPS)
+    tol2 = EPS / np.maximum(lengths, EPS)
+    return ~parallel & (t >= -tol1) & (t <= 1 + tol1) & (u >= -tol2) & (u <= 1 + tol2)
+
+
 def _apply_absences(features: list[Feature], beams: list[Segment], p: VectorMapParams) -> list[Feature]:
     out = []
+    if not beams:
+        return list(features)
+    starts = np.array([b.p1 for b in beams])
+    ends = np.array([b.p2 for b in beams])
     for f in features:
-        crossing = [b for b in beams if intersection(f.segment, b) is not None]
+        crossing = [beams[k] for k in np.flatnonzero(_crossing_mask(f.segment, starts, ends))]
         if len(crossing) < p.min_crossings:
             out.append(f)
             continue

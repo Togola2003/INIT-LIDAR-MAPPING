@@ -122,6 +122,36 @@ class MapView:
                                                zorder=5, solid_capstyle="round")
         self.redraw()
 
+    def draw_overlay(self, points: list[tuple], segments: list[tuple], poses: list[tuple] = ()) -> None:
+        """Couche libre : points = [(xy, couleur, taille, marqueur)], segments = [(liste, couleur, épaisseur)],
+        poses = [(Pose, couleur, en_avant)]. Remplace la couche précédente."""
+        for art in getattr(self, "overlay_arts", []):
+            art.remove()
+        self.overlay_arts = []
+        for xy, color, size, marker in points:
+            if len(xy):
+                self.overlay_arts.append(self.ax.scatter(xy[:, 0], xy[:, 1], s=size, c=color, marker=marker,
+                                                         linewidths=0 if marker != "x" else 1.2, zorder=3))
+        for segs, color, lw in segments:
+            for sg in segs:
+                self.overlay_arts += self.ax.plot([sg.x1, sg.x2], [sg.y1, sg.y2], "-", color=color, lw=lw,
+                                                  zorder=5, solid_capstyle="round")
+        for pose, color, strong in poses:
+            self.overlay_arts += self.ax.plot(pose.x, pose.y, "^", color=color, ms=13 if strong else 9,
+                                              mec="#fff" if strong else "#000", mew=1.5 if strong else 1, zorder=6)
+            self.overlay_arts += self.ax.plot([pose.x, pose.x + 0.3 * np.cos(pose.theta)],
+                                              [pose.y, pose.y + 0.3 * np.sin(pose.theta)], "-", color=color,
+                                              lw=2, zorder=6)
+        self.redraw()
+
+    def fit(self, points: np.ndarray, margin: float = 0.5) -> None:
+        """Cadre la vue pour montrer tous les points donnés."""
+        if len(points) == 0:
+            return
+        lo, hi = points.min(axis=0) - margin, points.max(axis=0) + margin
+        c = (lo + hi) / 2
+        self.frame(Pose(float(c[0]), float(c[1])), float(max(hi - lo) / 2))
+
     def frame(self, center: Pose, half_size: float) -> None:
         """Cadre la vue sur 'center' (± half_size sur le plus petit côté), en remplissant toute la zone."""
         w, h = self.fig.get_size_inches()

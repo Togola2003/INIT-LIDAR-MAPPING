@@ -11,18 +11,24 @@ from ..scan import Scan
 DIRECTIONS = (("Devant", 0), ("Gauche", 90), ("Derrière", 180), ("Droite", 270))
 
 
-def isolated_mask(points: np.ndarray, radius: float, min_neighbors: int) -> np.ndarray:
+NEIGHBOR_RATIO = 0.04   # rayon ajouté par mètre de distance (≈ 2,3° : 2 pas angulaires d'un LD06 à ~325 pts/tour)
+
+
+def isolated_mask(points: np.ndarray, radius, min_neighbors: int) -> np.ndarray:
     """True pour les points qui ont MOINS de min_neighbors voisins à moins de radius.
 
     Filtre « de voisinage » : un vrai mur donne des points serrés, un reflet ou un passant
     donne souvent des points isolés. Fonctionne sans l'intensité (données Teleplot).
+    radius peut être un nombre ou un tableau (un rayon par point, qui grandit avec la distance
+    car l'écart entre deux points voisins d'un même mur grandit avec la distance).
     """
     if min_neighbors <= 0 or len(points) == 0:
         return np.zeros(len(points), dtype=bool)
+    r2 = np.broadcast_to(np.asarray(radius, dtype=float) ** 2, (len(points),))
     counts = np.empty(len(points), dtype=int)
     for k in range(0, len(points), 256):
         d2 = ((points[k:k + 256, None, :] - points[None, :, :]) ** 2).sum(axis=2)
-        counts[k:k + 256] = (d2 <= radius ** 2).sum(axis=1) - 1   # -1 : le point lui-même
+        counts[k:k + 256] = (d2 <= r2[k:k + 256, None]).sum(axis=1) - 1   # -1 : le point lui-même
     return counts < min_neighbors
 
 
@@ -33,19 +39,23 @@ class Filters:
     max_range_m: float = 12.0
     min_intensity: int = 0
     min_neighbors: int = 0          # 0 = filtre de voisinage désactivé
-    neighbor_radius_m: float = 0.15
+    neighbor_radius_m: float = 0.10  # rayon à 0 m ; il augmente de NEIGHBOR_RATIO par mètre
+
+    def _isolated(self, s: Scan) -> np.ndarray:
+        radius = self.neighbor_radius_m + NEIGHBOR_RATIO * s.ranges_m
+        return isolated_mask(s.local_points(), radius, self.min_neighbors)
 
     def apply(self, scan: Scan) -> Scan:
         s = scan.filtered(self.min_range_m, self.max_range_m, self.min_intensity)
         if self.min_neighbors <= 0:
             return s
-        keep = ~isolated_mask(s.local_points(), self.neighbor_radius_m, self.min_neighbors)
+        keep = ~self._isolated(s)
         return replace(s, angles_deg=s.angles_deg[keep], ranges_m=s.ranges_m[keep], intensities=s.intensities[keep])
 
     def rejected(self, scan: Scan) -> Scan:
         """Points écartés par le filtre de voisinage (pour les montrer en rouge)."""
         s = scan.filtered(self.min_range_m, self.max_range_m, self.min_intensity)
-        bad = isolated_mask(s.local_points(), self.neighbor_radius_m, self.min_neighbors)
+        bad = self._isolated(s) if self.min_neighbors > 0 else np.zeros(len(s), dtype=bool)
         return replace(s, angles_deg=s.angles_deg[bad], ranges_m=s.ranges_m[bad], intensities=s.intensities[bad])
 
     def as_dict(self) -> dict:
