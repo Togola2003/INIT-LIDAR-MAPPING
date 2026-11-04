@@ -7,6 +7,11 @@
 | Produire une **carte complète de la salle de classe** | ✅ SLAM pas à pas du 04/11 : 93 scans, toute la salle ([session](../../data/salle_jour3/slam_salle_04-11.lidar.json)) |
 | Bonus : déplacer le robot et construire la carte en temps réel | ✅ robot piloté en Wi-Fi, suivi en direct entre deux scans, carte construite au fur et à mesure |
 
+<img src="../../docs/images/jour3/slam_progression.gif" width="640" alt="La carte grandit scan après scan">
+
+*Essai du 04/11 : la carte grandit de 9 à 93 scans. Captures : [docs/images/jour3/](../../docs/images/jour3/),
+synthèse : [compte rendu final](../../COMPTE_RENDU.md).*
+
 ## D'où on part
 
 - **Localisation dans une carte fixe :** elle marche hors ligne (10 méthodes) et en direct (`localization/tracking.py` :

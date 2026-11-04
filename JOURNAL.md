@@ -2,7 +2,7 @@
 
 Traçabilité demandée par l'énoncé : ce qui a été fait, quand, dans quel commit, et ce qui n'a pas marché du
 premier coup. Liste complète des commits : `git log --oneline`. Versions de fin de journée : `git tag`
-(`jour1`, `jour2`).
+(`jour1`, `jour2`, `jour3`).
 
 ## Jour 1 : lundi 02/11/2026
 
@@ -77,6 +77,7 @@ par étape.
 | fin d'après-midi | Consigne du prof : **SLAM pas à pas** (scan = référence, petit déplacement, rescan localisé par les points communs, partie nouvelle ajoutée). Module `slam.py` (grid map puis ICP fin, commun / nouveau, boucles), interface centrée dessus, doc [docs/SLAM.md](docs/SLAM.md). Simulation : tour complet de 18 scans, chaque pose à ≤ 1 cm | `4128361`, `e4e1550` |
 | 13 h 09 → 14 h 07 | ✅ **Essai en salle réussi** : SLAM pas à pas sur le vrai robot. 1er scan dans un coin, puis petits déplacements : chaque scan se localise et ajoute sa partie nouvelle. **93 scans**, toute la salle (≈ 12 × 9 m). Session : [data/salle_jour3/slam_salle_04-11.lidar.json](data/salle_jour3/slam_salle_04-11.lidar.json) | ce commit |
 | fin de séance | Question du prof : la grid map est-elle faite une fois à la fin ou scan par scan ? Réponse (scan par scan, log-odds : traversée −, impact +, les scans qui se recouvrent renforcent les murs et effacent ce qui a bougé ; même résultat dans n'importe quel ordre) : [docs/SLAM.md](docs/SLAM.md), test `tests/test_gridmap.py`. **Version validée marquée par le tag `jour3`** | ce commit |
+| soir | **Compte rendu final** ([COMPTE_RENDU.md](COMPTE_RENDU.md)) et README refait : captures de l'essai rangées dans `docs/images/jour3/`, animation de la carte qui grandit (9 → 93 scans) | ce commit |
 
 ### Problèmes rencontrés et solutions (Jour 3)
 
