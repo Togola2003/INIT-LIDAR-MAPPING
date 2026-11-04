@@ -72,4 +72,28 @@ par étape.
 | matin | Problème : les moteurs tournent tout seuls avec n'importe quel programme. Causes : fils moteurs en direct sur l'ESP32 (broches flottantes ou hautes au démarrage), et D19 utilisée par l'I2C du firmware RobotControl. **Firmware 01** (moteurs arrêtés + identification des fils) et **firmware 02** (lidar + moteurs + Wi-Fi + télécommande téléphone, compatible LidarLab), compilés tous les deux | `6458404` → `4abdfad` |
 | matin | Test 01 sur le robot : relevé fil → roue (M1 avant droite, M2 avant gauche, M3 arrière gauche, M4 arrière droite ; sur les roues de droite, c'est le fil « b » qui fait avancer), recopié dans `moteurs.h` | voir `git log` |
 
+| midi | Rotation inversée sur le vrai robot (« avancer » bon, « tourner à gauche » tourne à droite) : le relevé avait été fait robot vu de face, gauche et droite échangés. `moteurs.h` corrigé | `409a6e3` |
+| après-midi | Suivi en direct robuste : prédiction par les commandes (odométrie), fenêtre de recherche qui grandit avec le mouvement, tours douteux ignorés, trajet coupé aux relocalisations ; `place_scan` | `e99c449` |
+| après-midi | **Cartographie pas à pas** dans Récolter (chaque scan posé sur les précédents, recouvrement affiché, une couleur par scan, optimisation finale) ; suivi en arrière-plan (`app/live.py`), aussi dans Localiser. Essai simulé : scans posés à 2 cm près | `db6204c` |
+
+### Problèmes rencontrés et solutions (Jour 3)
+
+- **Moteurs qui tournent seuls :** broches mises à 0 en tout premier dans `setup()`, et firmware sans la bibliothèque
+  I2C du prof.
+- **Rotation inversée :** côtés gauche et droit échangés dans `moteurs.h` (relevé fait de face).
+- **Suivi qui « saute » à travers la salle :** chaque tour était cherché seul, et un tour flou pendant un virage
+  donnait une pose fausse. Maintenant, la pose prévue par les commandes sert de départ, un tour douteux n'est pas
+  tracé, et une recherche globale n'est acceptée que si elle est nette.
+- **Suivi en retard, interface figée :** la localisation tournait dans l'interface. Elle tourne maintenant dans un fil
+  à part, toujours sur le dernier tour reçu.
+- **« Commande non reçue : timed out » :** le robot n'a qu'un petit serveur web, et les demandes de `/scan` et les
+  commandes passent l'une après l'autre. Il suffit d'appuyer à nouveau ; chaque mouvement s'arrête de lui-même après
+  sa durée (sécurité).
+
+### Reste à faire (Jour 3)
+
+- Re-téléverser `02_LidarRobot_WiFi` et vérifier les 6 mouvements (← → compris).
+- Mesurer la vitesse réelle (m/s et °/s) pour régler l'odométrie dans `robot.py`.
+- Carte complète de la salle en cartographie pas à pas, puis comparaison avec les cartes des Jours 1 et 2.
+
 Plan : [TP/Jour3/README.md](TP/Jour3/README.md).

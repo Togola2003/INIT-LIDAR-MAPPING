@@ -44,20 +44,25 @@ rappel à la masse (10 kΩ) sur ces deux fils. Ce n'est pas nécessaire pour le 
    **dans quel sens** (vers l'avant ou l'arrière du robot). Recommence avec `2` … `8`.
 5. Remplis ce tableau, il sert à l'étape 2 :
 
-| Touche | Fil | Broche | Roue qui tourne | Sens |
+| Touche | Fil | Broche | Roue qui tourne (côtés du robot) | Sens |
 |---|---|---|---|---|
-| 1 | m3a | D15 | arrière gauche | avance |
-| 2 | m3b | D2 | arrière gauche | recule |
-| 3 | m4a | D4 | arrière droite | recule |
-| 4 | m4b | D16 | arrière droite | avance |
-| 5 | m1a | D17 | avant droite | recule |
-| 6 | m1b | D5 | avant droite | avance |
-| 7 | m2a | D18 | avant gauche | avance |
-| 8 | m2b | D19 | avant gauche | recule |
+| 1 | m3a | D15 | arrière droite | avance |
+| 2 | m3b | D2 | arrière droite | recule |
+| 3 | m4a | D4 | arrière gauche | recule |
+| 4 | m4b | D16 | arrière gauche | avance |
+| 5 | m1a | D17 | avant gauche | recule |
+| 6 | m1b | D5 | avant gauche | avance |
+| 7 | m2a | D18 | avant droite | avance |
+| 8 | m2b | D19 | avant droite | recule |
 
-*Relevé fait sur notre robot le 04/11. Résultat : M1 = avant droite, M2 = avant gauche, M3 = arrière gauche, M4 =
-arrière droite. Sur les roues de droite, c'est le fil « b » qui fait avancer. Ce tableau est déjà recopié dans
-`02_LidarRobot_WiFi/moteurs.h`.*
+*Relevé fait sur notre robot le 04/11, puis corrigé : le premier relevé avait été fait en regardant le robot de face,
+donc gauche et droite étaient échangés (« avancer » marchait, mais « tourner à gauche » tournait à droite).
+**Gauche / droite = côtés du robot vu de derrière, lidar devant.** Résultat : M1 = avant gauche, M2 = avant droite,
+M3 = arrière droite, M4 = arrière gauche. Ce tableau est recopié dans `02_LidarRobot_WiFi/moteurs.h`.*
+
+**Après la correction, re-téléverse `02_LidarRobot_WiFi`, puis vérifie les 6 mouvements :** ↑ avance, ↓ recule,
+↶ tourne à gauche (sens inverse des aiguilles d'une montre vu de dessus), ↷ à droite, ← glisse à gauche, → à droite.
+Si seuls ← et → sont inversés, échange les lignes `left` et `right` de `MOVES` dans `moteurs.h`.
 
 - **Normalement,** chaque paire (m1a/m1b, …) commande **la même roue**, une fois dans un sens et une fois dans l'autre.
 - **Vérification :** `a` `b` `c` `d` font tourner M1 M2 M3 M4 dans le sens « A », et `A` `B` `C` `D` dans l'autre sens.
