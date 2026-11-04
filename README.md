@@ -94,7 +94,7 @@ Une seule fenêtre, six étapes, dans l'ordre du cours. Chaque geste s'annule (C
 |---|---|---|---|
 | **Question** | Lire le lidar, faire une grid map et une carte vectorielle | Retrouver la pose du robot sur une carte connue | Construire la carte **et** se localiser, en même temps |
 | **Réponse** | 16 scans, poses mesurées à la main puis corrigées (ICP, recalage global : 6,4 → 2,2 cm) | 10 méthodes, 6 240 essais : multi-résolution + gradient, **99 %** de réussite | Robot en Wi-Fi, chaque scan posé sur la carte en construction : **93 scans, salle complète** |
-| **Image** | <img src="TP/Jour1/figures/fig8_carte_finale.png" width="260"> | <img src="TP/Jour2/figures/fig3_exemple_localisation.png" width="260"> | <img src="docs/images/jour3/cartes_grid_map.png" width="260"> |
+| **Image** | <img src="TP/Jour1/figures/fig8_carte_finale.png" width="260"> | <img src="TP/Jour2/figures/fig3_exemple_localisation.png" width="260"> | <img src="docs/images/jour3/carte_finale_grid_murs.png" width="260"> |
 | **Détails** | [Compte rendu](TP/Jour1/COMPTE_RENDU.md) | [Compte rendu](TP/Jour2/COMPTE_RENDU.md) | [Jour 3](TP/Jour3/README.md) · [SLAM](docs/SLAM.md) |
 
 **Simulation d'abord, salle ensuite.** Chaque algorithme est d'abord essayé dans une salle virtuelle où l'on connaît
