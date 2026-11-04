@@ -24,7 +24,7 @@
 #include "page.h"
 
 // ---------------------------------------------------------------- Wi-Fi : donne un nom propre à TON robot
-const char* SSID = "RobotESP32";       // plusieurs robots dans la salle ? mets un nom unique, ex. "LD06-Togola"
+const char* SSID = "LD06-Togola";       // plusieurs robots dans la salle ? mets un nom unique, ex. "LD06-Togola"
 const char* PASSWORD = "12345678";     // 8 caractères minimum
 
 // ---------------------------------------------------------------- lidar

@@ -5,6 +5,10 @@
 //  Rempli avec le résultat de l'étape 1 (01_Moteurs_Test, relevé du 04/11) :
 //  pour chaque POSITION de roue, broche A = celle qui la fait AVANCER, broche B = celle qui la fait reculer.
 //  (inverser = true si, avec « avancer », une roue tourne quand même en arrière.)
+//
+//  Correction du 04/11 : avec le premier tableau, « tourner à gauche » faisait tourner à droite alors que
+//  « avancer » était bon -> les côtés gauche et droit étaient échangés (relevé fait en regardant le robot
+//  de face). Gauche / droite ci-dessous = gauche / droite DU ROBOT, vu de derrière, lidar devant.
 // ============================================================================
 #pragma once
 #include <Arduino.h>
@@ -12,10 +16,10 @@
 struct Wheel { uint8_t pinA; uint8_t pinB; bool invert; const char* name; };
 
 Wheel WHEELS[4] = {
-  {18, 19, false, "avant gauche"},     // M2 : m2a (D18) avance, m2b (D19) recule   (touches 7 / 8)
-  { 5, 17, false, "avant droite"},     // M1 : m1b (D5)  avance, m1a (D17) recule   (touches 6 / 5)
-  {15,  2, false, "arriere gauche"},   // M3 : m3a (D15) avance, m3b (D2)  recule   (touches 1 / 2)
-  {16,  4, false, "arriere droite"},   // M4 : m4b (D16) avance, m4a (D4)  recule   (touches 4 / 3)
+  { 5, 17, false, "avant gauche"},     // M1 : m1b (D5)  avance, m1a (D17) recule   (touches 6 / 5)
+  {18, 19, false, "avant droite"},     // M2 : m2a (D18) avance, m2b (D19) recule   (touches 7 / 8)
+  {16,  4, false, "arriere gauche"},   // M4 : m4b (D16) avance, m4a (D4)  recule   (touches 4 / 3)
+  {15,  2, false, "arriere droite"},   // M3 : m3a (D15) avance, m3b (D2)  recule   (touches 1 / 2)
 };
 enum { AVG = 0, AVD = 1, ARG = 2, ARD = 3 };
 
