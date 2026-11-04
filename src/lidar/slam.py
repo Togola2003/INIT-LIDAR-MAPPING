@@ -35,7 +35,8 @@ from .scan import Scan
 
 COMMON_M = 0.08          # un point à moins de 8 cm de la carte est « commun » ; au-delà, il est « nouveau »
 GOOD_OVERLAP = 0.35      # au moins 35 % de points communs : placement sûr
-LOOP_SHARE = 0.25        # un scan ancien qui partage ≥ 25 % des points : la boucle se referme
+LOOP_SHARE = 0.25        # un scan ancien qui partage ≥ 25 % des points…
+LOOP_TRAVEL_M = 3.0      # … après au moins 3 m de trajet depuis lui : la boucle se referme
 ICP_MAX_JUMP_M, ICP_MAX_JUMP_DEG = 0.30, 10.0   # l'ICP fin ne doit que corriger un peu le placement grossier
 MIN_POINTS = 20
 
@@ -59,9 +60,13 @@ class SlamStep:
     def new_share(self) -> float:
         return 1.0 - self.overlap
 
-    def loops(self, n_scans: int, recent: int = 2) -> list[int]:
-        """Scans ANCIENS (pas les `recent` derniers) retrouvés par ce scan : signe d'une boucle refermée."""
-        return [k for k, share in self.shared if share >= LOOP_SHARE and k < n_scans - recent]
+    def loops(self, kept_poses: list[Pose], min_travel_m: float = LOOP_TRAVEL_M) -> list[int]:
+        """Scans ANCIENS retrouvés par ce scan : il partage beaucoup de points avec le scan k, alors que le robot
+        a parcouru au moins min_travel_m depuis k. L'erreur accumulée sur ce trajet peut alors être corrigée."""
+        path = list(kept_poses) + [self.pose]
+        steps = [float(np.hypot(b.x - a.x, b.y - a.y)) for a, b in zip(path, path[1:])]
+        travel = np.cumsum(steps[::-1])[::-1]           # travel[k] = trajet du scan k jusqu'au nouveau scan
+        return [k for k, share in self.shared if share >= LOOP_SHARE and k < len(travel) and travel[k] >= min_travel_m]
 
 
 class SlamMap:

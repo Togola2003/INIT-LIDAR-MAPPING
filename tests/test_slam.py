@@ -69,8 +69,9 @@ def test_new_part_and_loop_closure(tour):
     truths, kept, steps = tour
     assert steps[1].new_share > 0.05                             # le 3e scan découvre une partie nouvelle
     assert all(s.new_share < 0.65 for s in steps)                # petits pas : jamais trop de nouveau d'un coup
-    last = steps[-1]
-    assert 0 in last.loops(len(kept) - 1)                        # le dernier scan retrouve le 1er : boucle
+    poses = [k.pose for k in kept]
+    assert 0 in steps[-1].loops(poses[:-1])                      # le dernier scan retrouve le 1er : boucle
+    assert steps[2].loops(poses[:3]) == []                       # au début, voir le 1er scan n'est pas une boucle
 
 
 def test_global_optimization_keeps_the_map(tour):
