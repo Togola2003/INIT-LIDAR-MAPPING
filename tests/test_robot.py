@@ -63,3 +63,13 @@ def test_wifi_source_and_commands_against_a_fake_robot():
     scans = [e.payload for e in list(q.queue) if e.kind == "scan"]
     assert len(scans) == 1 and len(scans[0].scan) == 360        # même tour renvoyé : publié une seule fois
     assert "/forward?time=2000" in _FakeRobot.calls and "/stop" in _FakeRobot.calls
+
+
+def test_speed_command_against_a_fake_robot():
+    server = HTTPServer(("127.0.0.1", 0), _FakeRobot)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    client = RobotClient(f"127.0.0.1:{server.server_address[1]}")
+    client.set_speed(999)
+    time.sleep(0.3)
+    server.shutdown()
+    assert "/speed?v=255" in _FakeRobot.calls

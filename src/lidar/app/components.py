@@ -79,7 +79,22 @@ class PilotPad(ctk.CTkFrame):
         S.button(pad, "■", self.stop, "danger", width=50, height=42, font=S.font(16)).grid(row=1, column=1, padx=3, pady=3)
         self.duration = S.Slider(self, "Durée d'un mouvement", 100, 2000, 400, "{:.0f} ms", lambda v: None, steps=19)
         self.duration.pack(fill="x", pady=(8, 0))
+        self.speed = S.Slider(self, "Vitesse (firmware du dépôt)", 60, 255, 150, "{:.0f}", lambda v: None, steps=39)
+        self.speed.slider.configure(command=lambda v: (self.speed._changed(v), self._speed_later()))
+        self.speed.pack(fill="x")
+        self._speed_job = None
         S.hint(self, "Clavier : I K (avancer, reculer) · J L (côtés) · U O (tourner) · Espace = stop")
+
+    def _speed_later(self) -> None:
+        if self._speed_job:
+            self.after_cancel(self._speed_job)
+        self._speed_job = self.after(250, self._send_speed)
+
+    def _send_speed(self) -> None:
+        self._speed_job = None
+        client = self.get_client()
+        if client is not None:
+            client.set_speed(int(self.speed.get()))
 
     def move(self, action: str) -> None:
         client = self.get_client()

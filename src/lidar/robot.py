@@ -9,7 +9,9 @@ sur http://192.168.4.1 :
   Les angles sont déjà dans le sens trigonométrique (comme printScanCSV).
 - GET /forward, /backward, /left, /right, /rotateleft, /rotateright ?time=ms : un mouvement de time ms
   (2 s au plus ; le firmware divise le temps des rotations par deux) ;
-- GET /stop : arrêt ; GET /pose?x=mm&y=mm&z=cdeg : mémoriser une pose ; GET /ping.
+- GET /stop : arrêt ; GET /pose?x=mm&y=mm&z=cdeg : mémoriser une pose ; GET /ping ;
+- (firmware 02_LidarRobot_WiFi du dépôt) GET /speed?v=0..255, /wheel, /status, et une télécommande
+  pour téléphone sur http://192.168.4.1/.
 Le robot n'a pas de codeurs : il ne connaît pas sa position. C'est la localisation qui la trouve.
 """
 
@@ -83,6 +85,11 @@ class RobotClient:
 
     def stop(self) -> None:
         threading.Thread(target=self._send, args=("/stop", False), daemon=True).start()
+
+    def set_speed(self, value: int) -> None:
+        """Vitesse des mouvements (0-255), firmware 02_LidarRobot_WiFi (ignorée par RobotControl)."""
+        v = int(max(0, min(255, value)))
+        threading.Thread(target=self._send, args=(f"/speed?v={v}", False), daemon=True).start()
 
     def set_pose(self, pose: Pose) -> None:
         z = int(round(pose.theta_deg * 100)) % 36000
