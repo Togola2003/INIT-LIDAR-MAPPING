@@ -10,6 +10,7 @@ construire son panneau et dessiner sa carte.
 from __future__ import annotations
 
 import collections
+import gc
 import queue
 import sys
 from dataclasses import replace
@@ -32,6 +33,7 @@ from .steps import STEPS
 from .tools import RectTool, WallTool
 
 TICK_MS = 80
+FULL_GC_TICKS = 75      # ramasse-miettes complet toutes les ≈ 6 s, dans le fil de l'interface
 # outils toujours visibles au-dessus de la carte : gomme à points + retouches des murs
 TOOLS = {"gomme": "⌫  Gomme", "tracer": "✎  Tracer un mur", "prolonger": "↔  Prolonger", "supprimer": "✕  Effacer un mur"}
 WALL_MODES = {"tracer", "prolonger", "supprimer"}
@@ -72,6 +74,10 @@ class LidarLab:
         self.store.subscribe(self._on_project)
         self._bind_keys()
         root.protocol("WM_DELETE_WINDOW", self.quit)
+        # Ramasse-miettes manuel, TOUJOURS dans le fil de l'interface : libérer un objet Tk (police, image,
+        # variable) depuis le fil de la localisation en direct bloquerait ce fil (Tk n'accepte qu'un seul fil).
+        gc.disable()
+        self._ticks = 0
         self._tick_job = root.after(TICK_MS, self._tick)
         self.go(0)
         self._on_project(self.project)
@@ -546,6 +552,8 @@ class LidarLab:
         res = self.live.poll()
         if res is not None:
             self.step.on_track(res)
+        self._ticks += 1
+        gc.collect(2 if self._ticks % FULL_GC_TICKS == 0 else 0)
         self._tick_job = self.root.after(TICK_MS, self._tick)
 
     def on_command(self, action: str, ms: int, speed: int) -> None:

@@ -100,7 +100,7 @@ class LiveLocalizer:
             self.busy = True
             try:
                 step = tracker.update(pts, self.odometry.take())
-            except ValueError:
+            except Exception:                     # un tour impossible à traiter ne doit pas arrêter le suivi
                 step = None
             finally:
                 self.busy = False

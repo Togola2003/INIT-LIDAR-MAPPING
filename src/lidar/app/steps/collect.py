@@ -1,27 +1,24 @@
-"""Étape 1 · Récolter : relier le robot, récolter N tours, garder ou refaire. Ou importer.
+"""Étape 1 · Récolter : relier le robot, faire le SLAM pas à pas (ou de simples captures), importer.
 
-Cartographie pas à pas (SLAM « stop and go ») :
-  1. le 1er scan fixe l'origine de la carte (0, 0, 0) ;
-  2. on déplace le robot (pavé de pilotage, ou à la main) ; s'il est suivi en direct, sa position est
-     mise à jour sur la carte déjà construite (localisation en arrière-plan, app/live.py) ;
-  3. on capture : le nouveau scan (pris à l'arrêt, N tours) est POSÉ sur les scans déjà gardés
-     (scan matching autour de la position suivie, sinon dans toute la carte), avec sa propre couleur ;
-  4. on recommence ; à la fin, « Optimiser toute la carte » corrige toutes les poses ensemble.
-Les distances du lidar sont en mètres : la carte garde la bonne échelle ; seule la pose (x, y, θ) de
-chaque scan est cherchée, grâce aux parties communes avec les scans précédents.
+SLAM pas à pas, consigne du Jour 3 (le calcul est dans lidar/slam.py, ici il n'y a que l'interface) :
+  1. 1er scan, n'importe où : il devient la PREMIÈRE RÉFÉRENCE (origine 0, 0, 0 de la carte) ;
+  2. on déplace un peu le robot (pavé de pilotage Wi-Fi, ou à la main). Entre deux scans, il est suivi en
+     direct sur la carte déjà construite (app/live.py, en arrière-plan) ;
+  3. on scanne à l'arrêt (N tours) : le scan est LOCALISÉ sur la référence grâce à ses points communs
+     (orange), et ses autres points sont la PARTIE NOUVELLE (vert) ;
+  4. Garder : référence + nouveau scan = nouvelle référence. On recommence par petits pas ;
+  5. quand un scan retrouve un scan ancien (boucle), « Optimiser toute la carte » recale toutes les poses.
 """
 
 from __future__ import annotations
 
 import customtkinter as ctk
 
-from ...geometry import Pose
-from ...localization.grid import LikelihoodField, build_pyramid
-from ...localization.tracking import place_scan
-from ...refmap import build_reference
-from ...scope.collector import COMBINE_MODES, Collection, finish
+from ...geometry import Pose, local_to_global
 from ...robot import DEFAULT_HOST
+from ...scope.collector import COMBINE_MODES, Collection, finish
 from ...scope.sources import FORMAT_TELEPLOT
+from ...slam import SlamMap
 from .. import project as P
 from .. import style as S
 from ..components import PilotPad
@@ -29,46 +26,63 @@ from ..live import trail_segments
 from ..tools import PoseTool
 from .base import Step
 
-GOOD_OVERLAP = 0.35        # part des points du nouveau scan sur les murs déjà connus pour un placement sûr
-
-
 BAUDS = ["115200", "230400", "460800", "921600"]
 SOURCES = ["Câble USB", "Wi-Fi", "Démo"]
+MIN_POINTS = 20
 
 
 class CollectStep(Step):
     title = "Récolter"
-    subtitle = "robot, captures, import"
-    headline = "Le scan en direct apparaît en noir à la pose du robot ; les captures gardées en couleur."
-    course = ("Un scan = un tour du lidar (≈ 450 points). Le robot doit rester immobile pendant la capture : "
-              "on récolte plusieurs tours au même endroit, puis on les combine pour réduire le bruit. "
-              "La pose (x, y, θ) place le scan dans la carte : P_carte = R(θ)·P_lidar + (x, y).")
+    subtitle = "robot, SLAM pas à pas"
+    headline = ("SLAM pas à pas : scanne, garde, déplace un peu, rescanne. Chaque scan se pose sur les précédents "
+                "(orange = commun, vert = partie nouvelle).")
+    course = ("SLAM = localisation et cartographie simultanées. Le 1er scan est la référence. Chaque nouveau scan "
+              "a des points communs avec elle : on cherche la pose (x, y, θ) qui les superpose (scan matching), "
+              "puis on ajoute ses autres points à la carte. Petits pas = beaucoup de points communs = pose sûre. "
+              "Le lidar mesure en mètres : l'échelle de la carte ne change jamais.")
 
     def __init__(self, app) -> None:
         super().__init__(app)
         self.robot = Pose()
         self.collection: Collection | None = None
-        self.preview = None
+        self.preview = None             # (scan, info, raw, fmt, SlamStep | None)
         self.trail: tuple = ()          # trajet suivi en direct (Pose ou None = coupure)
         self._map_key = None
-        self._map = None                # (carte de référence, champ, pyramide) des scans gardés
+        self._map: SlamMap | None = None
+        self._announced: set[int] = set()   # scans anciens déjà signalés comme « boucle refermée »
 
-    # ------------------------------------------------------------------ panneau
+    # ================================================================== panneau
     def build(self, panel) -> None:
-        card = S.Card(panel, "Robot", "Câble USB, Wi-Fi (réseau « RobotESP32 », firmware RobotControl), ou démo.")
+        self._build_robot(panel)
+        self._build_slam(panel)
+        self.pilot_card = S.Card(panel, "Piloter le robot (Wi-Fi)", "Petits déplacements : un appui = un court "
+                                                                     "mouvement, puis arrêt automatique.")
+        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status, self.app.on_command)
+        self.pad.pack(fill="x")
+        self._build_settings(panel)
+        self._build_pose(panel)
+        card = S.Card(panel, "Importer", "Session .lidar.json, CSV du TP, RobotControl, MapTool…")
         card.pack(fill="x", pady=(0, 10))
+        S.button(card.body, "Ouvrir des scans…", self.app.open_files).pack(fill="x")
+        self.refresh_ports()
+        self._source_changed()
+        self._refresh_status()
+
+    def _build_robot(self, panel) -> None:
+        card = S.Card(panel, "Robot", "Câble USB, Wi-Fi (réseau du robot, firmware 02_LidarRobot_WiFi), ou démo.")
+        card.pack(fill="x", pady=(0, 10))
+        self.robot_card = card
         b = card.body
         self.source = S.segmented(b, SOURCES, SOURCES[0], lambda v: self._source_changed())
         self.source.pack(fill="x", pady=(0, 8))
         row = ctk.CTkFrame(b, fg_color="transparent")
         row.pack(fill="x")
-        self.port = ctk.CTkOptionMenu(row, values=["—"], width=110, height=30, font=S.font(12), fg_color=S.SURFACE_2,
-                                      button_color=S.BORDER, button_hover_color=S.FAINT, text_color=S.INK,
-                                      dropdown_font=S.font(12))
+        menu = dict(height=30, font=S.font(12), fg_color=S.SURFACE_2, button_color=S.BORDER,
+                    button_hover_color=S.FAINT, text_color=S.INK)
+        self.port = ctk.CTkOptionMenu(row, values=["—"], width=110, dropdown_font=S.font(12), **menu)
         self.port.pack(side="left")
         S.button(row, "↻", self.refresh_ports, width=34).pack(side="left", padx=6)
-        self.baud = ctk.CTkOptionMenu(row, values=BAUDS, width=100, height=30, font=S.font(12), fg_color=S.SURFACE_2,
-                                      button_color=S.BORDER, button_hover_color=S.FAINT, text_color=S.INK)
+        self.baud = ctk.CTkOptionMenu(row, values=BAUDS, width=100, **menu)
         self.baud.pack(side="left")
         self.wifi_row = ctk.CTkFrame(b, fg_color="transparent")
         ctk.CTkLabel(self.wifi_row, text="Adresse", font=S.font(12), text_color=S.MUTED).pack(side="left")
@@ -82,38 +96,25 @@ class CollectStep(Step):
         self.live_info = S.KeyValues(b)
         self.live_info.pack(fill="x", pady=(4, 0))
 
-        self.pilot_card = S.Card(panel, "Piloter le robot (Wi-Fi)", "Chaque appui = un mouvement de la durée choisie.")
-        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status, self.app.on_command)
-        self.pad.pack(fill="x")
-
-        card = S.Card(panel, "Cartographie pas à pas", "1. capture (le 1er scan = origine)  2. déplace le robot  "
-                                                       "3. capture : le scan se pose sur les précédents  4. recommence")
+    def _build_slam(self, panel) -> None:
+        card = S.Card(panel, "SLAM pas à pas", "① scanne → Garder (1er scan = référence)   ② déplace un peu   "
+                                               "③ rescanne → Garder   … jusqu'à toute la salle")
         card.pack(fill="x", pady=(0, 10))
+        self.slam_card = card
         b = card.body
-        self.auto = S.toggle(b, "Poser chaque scan sur les précédents", self.render, on=True)
-        self.auto.pack(anchor="w", pady=2)
-        self.follow = S.toggle(b, "Suivre le robot en direct entre deux scans", self._follow_changed, on=True)
-        self.follow.pack(anchor="w", pady=2)
-        self.slam_info = S.hint(b, "")
-        self.slam_info.pack(fill="x", pady=(2, 0))
-        S.button(b, "Optimiser toute la carte (fermer les boucles)", self.optimize, "ghost").pack(fill="x", pady=(6, 0))
-
-        card = S.Card(panel, "Capture", "C = récolter · C de nouveau = arrêter · Entrée = garder · Échap = jeter")
-        card.pack(fill="x", pady=(0, 10))
-        b = card.body
-        self.tours = S.Slider(b, "Tours à récolter", 1, 30, 10, "{:.0f}", lambda v: None, steps=29)
-        self.tours.pack(fill="x")
-        self.combine = S.segmented(b, list(COMBINE_MODES), COMBINE_MODES[0], lambda v: None)
-        self.combine.pack(fill="x", pady=(2, 6))
-        S.hint(b, "Médiane : un point par angle, bruit réduit. Tous : nuage plus dense.")
-        self.capture_btn = S.button(b, "Capturer", self.capture, "primary", height=42, font=S.font(14, "bold"))
-        self.capture_btn.pack(fill="x", pady=(6, 4))
+        self.map_status = ctk.CTkLabel(b, text="", font=S.font(14, "bold"), text_color=S.INK, anchor="w")
+        self.map_status.pack(fill="x")
+        self.next_hint = S.hint(b, "")
+        self.next_hint.pack(fill="x", pady=(0, 4))
+        self.capture_btn = S.button(b, "Scanner", self.capture, "primary", height=42, font=S.font(14, "bold"))
+        self.capture_btn.pack(fill="x", pady=(4, 4))
         self.bar = ctk.CTkProgressBar(b, height=6, progress_color=S.ACCENT, fg_color=S.SURFACE_2, corner_radius=3)
         self.bar.set(0)
         self.bar.pack(fill="x", pady=(2, 4))
         self.preview_box = ctk.CTkFrame(b, fg_color="#FFF6E5", corner_radius=12)
-        ctk.CTkLabel(self.preview_box, text="Aperçu (orange sur la carte)", font=S.font(12, "bold"),
-                     text_color=S.WARN).pack(anchor="w", padx=12, pady=(10, 0))
+        self.preview_title = ctk.CTkLabel(self.preview_box, text="", font=S.font(12, "bold"), text_color=S.WARN,
+                                          anchor="w", justify="left", wraplength=300)
+        self.preview_title.pack(fill="x", padx=12, pady=(10, 0))
         self.preview_info = S.KeyValues(self.preview_box)
         self.preview_info.pack(fill="x", padx=12, pady=4)
         row = ctk.CTkFrame(self.preview_box, fg_color="transparent")
@@ -121,9 +122,30 @@ class CollectStep(Step):
         S.button(row, "Garder", self.keep, "primary", width=90).pack(side="left", padx=3)
         S.button(row, "Refaire", self.redo, width=80).pack(side="left", padx=3)
         S.button(row, "Jeter", self.drop, "danger", width=70).pack(side="left", padx=3)
+        self.track_info = S.hint(b, "")
+        self.track_info.pack(fill="x", pady=(4, 0))
+        self.loop_info = S.hint(b, "", color=S.ACCENT)
+        self.loop_info.pack(fill="x")
+        S.button(b, "Optimiser toute la carte (fermer les boucles)", self.optimize, "ghost").pack(fill="x", pady=(6, 0))
+        S.hint(b, "C = scanner · Entrée = garder · Échap = jeter").pack(fill="x", pady=(4, 0))
 
-        card = S.Card(panel, "Pose du robot", "Là où le scan sera posé sur la carte. Mesurée au mètre, ou placée à la "
-                                             "souris : clic = position, glisser = orientation.")
+    def _build_settings(self, panel) -> None:
+        card = S.Card(panel, "Réglages du scan")
+        card.pack(fill="x", pady=(0, 10))
+        b = card.body
+        self.tours = S.Slider(b, "Tours par scan (robot immobile)", 1, 30, 10, "{:.0f}", lambda v: None, steps=29)
+        self.tours.pack(fill="x")
+        self.combine = S.segmented(b, list(COMBINE_MODES), COMBINE_MODES[0], lambda v: None)
+        self.combine.pack(fill="x", pady=(2, 6))
+        S.hint(b, "Médiane : un point par angle, bruit réduit. Tous : nuage plus dense.")
+        self.auto = S.toggle(b, "Poser chaque scan sur la carte déjà construite", self.render, on=True)
+        self.auto.pack(anchor="w", pady=(6, 2))
+        self.follow = S.toggle(b, "Suivre le robot en direct entre deux scans", self._follow_changed, on=True)
+        self.follow.pack(anchor="w", pady=2)
+
+    def _build_pose(self, panel) -> None:
+        card = S.Card(panel, "Pose du robot", "Mise à jour toute seule par le SLAM. À la main : mesurée au mètre, ou "
+                                             "placée à la souris (clic = position, glisser = orientation).")
         card.pack(fill="x", pady=(0, 10))
         self.pose_field = S.PoseField(card.body)
         self.pose_field.pack(anchor="w")
@@ -132,23 +154,17 @@ class CollectStep(Step):
         S.button(row, "Placer sur la carte", self.place_on_map, width=150).pack(side="left")
         S.button(row, "Appliquer", self.apply_pose_field, "ghost", width=90).pack(side="right")
 
-        card = S.Card(panel, "Importer", "Session .lidar.json, CSV du TP, RobotControl, MapTool…")
-        card.pack(fill="x", pady=(0, 10))
-        S.button(card.body, "Ouvrir des scans…", self.app.open_files).pack(fill="x")
-        self.refresh_ports()
-        self._source_changed()
-
-    # ------------------------------------------------------------------ connexion
+    # ================================================================== connexion
     def _source_changed(self) -> None:
         src = self.source.get()
         self.source_hint.configure(text={
-            "Wi-Fi": "Connecte d'abord le PC au Wi-Fi « RobotESP32 » (mot de passe 12345678), puis Connecter.",
+            "Wi-Fi": "Connecte d'abord le PC au Wi-Fi du robot (mot de passe 12345678), puis Connecter.",
             "Démo": "Démo : une salle simulée, sans robot.",
             "Câble USB": "Ferme le moniteur série d'Arduino avant de connecter."}[src], text_color=S.MUTED)
         if src == "Wi-Fi":
             self.port_row.pack_forget()
             self.wifi_row.pack(fill="x", before=self.connect_btn)
-            self.pilot_card.pack(fill="x", pady=(0, 10), after=self.connect_btn.master.master)
+            self.pilot_card.pack(fill="x", pady=(0, 10), after=self.slam_card)
         else:
             self.wifi_row.pack_forget()
             self.port_row.pack(fill="x", before=self.connect_btn)
@@ -176,7 +192,7 @@ class CollectStep(Step):
             self.app.connect(self.port.get(), int(self.baud.get()))
         self.connect_btn.configure(text="Déconnecter")
 
-    # ------------------------------------------------------------------ pose
+    # ================================================================== pose donnée à la main
     def place_on_map(self) -> None:
         """Un seul placement : le clic suivant pose le robot, puis la souris redevient normale."""
         self.app.set_tool(PoseTool(self.app.map, self._placed, S.ROBOT))
@@ -195,79 +211,99 @@ class CollectStep(Step):
     def apply_pose_field(self) -> None:
         try:
             self.set_robot(Pose(*self.pose_field.get()))
-            self._start_follow()
         except ValueError:
             self.app.status("x, y et θ doivent être des nombres.")
+            return
+        self._start_follow()
 
-    # ------------------------------------------------------------------ récolte
+    # ================================================================== scan
     def capture(self) -> None:
         if self.collection is not None:
             self._finish()
             return
         if self.app.source is None:
-            self.app.status("Connecte le robot (ou la démo) pour capturer, ou importe des scans.")
+            self.app.status("Connecte le robot (ou la démo) pour scanner, ou importe des scans.")
             return
-        self.drop()
+        self.drop(quiet=True)
         self.collection = Collection(int(round(self.tours.get())), self.robot)
-        self.capture_btn.configure(text="Arrêter la récolte", fg_color=S.WARN, hover_color="#E68600")
+        self.capture_btn.configure(text="Arrêter le scan", fg_color=S.WARN, hover_color="#E68600")
 
     def on_frame(self, frame) -> None:
         if self.collection is not None:
             self.collection = self.collection.add(frame)
             self.bar.set(self.collection.progress)
-            self.app.status(f"Récolte : {self.collection.count} / {self.collection.target} tours… ne bouge pas le robot.")
+            self.app.status(f"Scan : {self.collection.count} / {self.collection.target} tours… ne bouge pas le robot.")
             if self.collection.done:
                 self._finish()
 
     def _finish(self) -> None:
         col, self.collection = self.collection, None
-        self.capture_btn.configure(text="Capturer", fg_color=S.ACCENT, hover_color=S.ACCENT_HOVER)
+        self.capture_btn.configure(fg_color=S.ACCENT, hover_color=S.ACCENT_HOVER)
         self.bar.set(0)
+        self._refresh_status()
         if col is None or not col.count:
-            self.app.status("Aucun tour reçu : récolte annulée.")
+            self.app.status("Aucun tour reçu : scan annulé.")
             return
         scan, info = finish(col, self.combine.get())
-        scan, rows = self._place(scan)
-        self.preview = (scan, info, tuple(f.raw for f in col.frames), col.frames[-1].fmt)
+        scan, step, title, rows = self._locate(scan)
+        self.preview = (scan, info, tuple(f.raw for f in col.frames), col.frames[-1].fmt, step)
         noise = info["bruit_m"]
         quality = "—" if noise is None else ("bon" if noise < 0.02 else "moyen")
+        self.preview_title.configure(text=title, text_color=S.SUCCESS if step is None or step.ok else S.WARN)
         self.preview_info.show(rows + [("Tours", f"{info['tours']} / {info['voulus']}"),
                                        ("Points", f"{info['points']}"),
-                                       ("Bruit", "—" if noise is None else f"{noise * 100:.1f} cm ({quality})")])
-        self.preview_box.pack(fill="x", pady=(6, 0))
+                                       ("Bruit", "—" if noise is None else f"{noise * 100:.1f} cm ({quality})")],
+                               highlight="Points communs")
+        self.preview_box.pack(fill="x", pady=(6, 0), after=self.bar)
         self.app.status("Aperçu prêt : Garder (Entrée), Refaire, ou Jeter (Échap).")
         self.render()
 
-    def _place(self, scan):
-        """Pose du nouveau scan : sur les scans déjà gardés (SLAM), sinon à la pose du robot."""
+    def _locate(self, scan):
+        """Localisation du nouveau scan sur la référence (SLAM). Rendu : scan posé, SlamStep, titre, lignes."""
         if not self.auto.get():
-            return scan, []
-        m = self.current_map()
-        if m is None:
-            pose = self.robot if self.project.captures else Pose()
-            return scan.with_pose(pose), [("Placement", "1er scan : origine de la carte")]
-        self.app.status("Pose du scan sur la carte…")
-        self.app.root.update_idletasks()
-        ref, field, pyramid = m
+            return scan, None, "Posé à la pose du robot (SLAM désactivé)", []
+        slam = self.current_map()
+        if slam is None:
+            first = scan.with_pose(self.robot if self.project.captures else Pose())
+            return first, None, "1er scan : il devient la référence (origine de la carte)", []
         pts = self.app.filters().apply(scan).local_points()
-        if len(pts) < 20:
-            return scan, [("Placement", "⚠ trop peu de points : posé à la pose du robot")]
-        pl = place_scan(pts, self.robot, ref.grid, ref.segments, field, pyramid)
-        ok = pl.inliers >= GOOD_OVERLAP and not pl.ambiguous
-        note = "✓" if ok else "⚠ faible : rapproche-toi d'une zone déjà scannée, ou Refaire"
-        return scan.with_pose(pl.pose), [("Posé", pl.how), ("Recouvrement", f"{pl.inliers:.0%} {note}")]
+        if len(pts) < MIN_POINTS:
+            return scan, None, "⚠ Trop peu de points après les filtres : posé à la pose du robot", []
+        self.app.status("Localisation du scan sur la carte…")
+        self.app.root.update_idletasks()
+        try:
+            st = slam.locate(pts, self.robot)
+        except Exception as exc:                       # jamais de plantage : on garde la pose du robot
+            return scan, None, f"⚠ Localisation impossible ({exc}) : posé à la pose du robot", []
+        if st.ok:
+            title = "✓ Localisé sur la carte : Garder ajoute la partie nouvelle (vert)"
+        else:
+            title = "⚠ Peu de points communs : rapproche-toi d'une zone déjà scannée, puis Refaire"
+        p = st.pose
+        rows = [("Points communs", f"{st.overlap:.0%}"), ("Partie nouvelle", f"{st.new_share:.0%}"),
+                ("Pose", f"{p.x:+.2f}  {p.y:+.2f}  {p.theta_deg:+.0f}°"), ("Méthode", st.how.split(" (")[0]),
+                ("Calcul", f"{st.time_s * 1000:.0f} ms")]
+        return scan.with_pose(p), st, title, rows
 
     def keep(self) -> None:
         if self.preview is None:
             return
-        scan, info, raw, fmt = self.preview
+        scan, info, raw, fmt, step = self.preview
+        caps = self.project.visible
         self.drop(quiet=True)
         new, nums = P.add_scans(self.project, [("", scan)], source=fmt, raw=raw)
         self.app.sel, self.app.primary = {nums[0]}, nums[0]
-        p = scan.pose
-        self.app.apply(new, f"Scan {nums[0]} gardé à ({p.x:+.2f} m, {p.y:+.2f} m, {p.theta_deg:+.0f}°), "
-                            f"{info['points']} points. Déplace le robot, puis capture à nouveau.")
-        self.set_robot(p)
+        msg = (f"Scan {nums[0]} gardé : la carte a maintenant {len(caps) + 1} scan(s). "
+               "Déplace un peu le robot, puis scanne à nouveau.")
+        self.app.apply(new, msg)
+        loops = step.loops([c.scan.pose for c in caps]) if step is not None else []
+        self._announced |= {caps[k].number for k in loops}
+        if self._announced:                 # un seul message, gardé jusqu'à la prochaine optimisation
+            seen = sorted(self._announced)
+            names = ", ".join(map(str, seen[:4])) + ("…" if len(seen) > 4 else "")
+            self.loop_info.configure(text=f"↻ Boucle refermée : le robot retrouve des scans anciens ({names}). "
+                                          "« Optimiser toute la carte » corrige l'erreur accumulée (ou à la fin).")
+        self.set_robot(scan.pose)
         self._start_follow()
 
     def redo(self) -> None:
@@ -279,7 +315,7 @@ class CollectStep(Step):
             self.preview = None
             self.preview_box.pack_forget()
             if not quiet:
-                self.app.status("Capture jetée.")
+                self.app.status("Scan jeté.")
             self.render()
 
     def on_key(self, key: str) -> None:
@@ -297,40 +333,38 @@ class CollectStep(Step):
         self.drop(quiet=True)
         self.collection = None
         self.robot, self.trail, self._map_key, self._map = Pose(), (), None, None
+        self._announced = set()
         self.app.live.stop()
 
-    # ------------------------------------------------------------------ carte en construction, suivi
-    def current_map(self):
-        """Carte des scans déjà gardés (grille + murs) et son champ de vraisemblance ; None sans scan.
-        Gardée en cache tant que les scans, leurs poses et les filtres ne changent pas."""
+    # ================================================================== référence en construction, suivi
+    def current_map(self) -> SlamMap | None:
+        """La référence = tous les scans gardés et visibles. En cache tant que scans, poses et filtres ne changent pas."""
         caps = self.project.visible
         if not caps:
             return None
         key = (tuple((c.number, id(c.scan.ranges_m), c.scan.pose) for c in caps), self.project.wall_edits,
                self.app.filters())
         if key != self._map_key:
-            ref = build_reference([self.app.filtered(c) for c in caps],
-                                  [c.title for c in caps], self.project.wall_edits)
-            field = LikelihoodField.from_grid(ref.grid)
-            self._map, self._map_key = (ref, field, build_pyramid(field)), key
+            self._map = SlamMap([self.app.filtered(c) for c in caps], [c.title for c in caps], self.project.wall_edits)
+            self._map_key = key
         return self._map
 
     def _start_follow(self) -> None:
-        """(Re)lance le suivi en direct sur la carte actuelle, depuis la pose du robot."""
+        """(Re)lance le suivi en direct sur la référence actuelle, depuis la pose du robot."""
         if not (self.follow.get() and self.app.source is not None and self.app.step is self):
             self.app.live.stop()
             return
-        m = self.current_map()
-        if m is None:
+        slam = self.current_map()
+        if slam is None:
             return
-        ref, field, pyramid = m
-        self.app.live.start(ref.grid, ref.segments, self.robot, field, pyramid)
+        self.app.live.start(slam.grid, slam.segments, self.robot, slam.field, slam.pyramid)
         self.trail = (self.robot,)
 
     def _follow_changed(self) -> None:
         self._start_follow()
         if not self.follow.get():
             self.trail = ()
+            self.track_info.configure(text="")
         self.render()
 
     def on_track(self, result) -> None:
@@ -339,9 +373,11 @@ class CollectStep(Step):
             self.robot = st.pose
             self.pose_field.set(st.pose.x, st.pose.y, st.pose.theta_deg)
         self.trail = result.trail
-        color = S.SUCCESS if st.mode == "suivi" else S.WARN
-        self.slam_info.configure(text=f"Robot : {st.mode} · {st.inliers:.0%} des points sur la carte · "
-                                      f"{st.time_s * 1000:.0f} ms", text_color=color)
+        text = {"suivi": "● Robot suivi sur la carte", "global": "● Robot retrouvé sur la carte",
+                "incertain": "● Suivi incertain (tour flou) : pose prévue gardée",
+                "perdu": "● Robot perdu : rapproche-le d'une zone déjà scannée"}[st.mode]
+        self.track_info.configure(text=f"{text} · {st.inliers:.0%} des points sur les murs",
+                                  text_color=S.SUCCESS if st.mode in ("suivi", "global") else S.WARN)
         self.render()
 
     def optimize(self) -> None:
@@ -349,21 +385,27 @@ class CollectStep(Step):
             self.app.status("Il faut au moins deux scans pour optimiser la carte.")
             return
         self.app.steps[2].align_full()
-        self._start_follow()
+        self.loop_info.configure(text="")
+        self._announced = set()
+        if self.app.live.running:
+            self._start_follow()
+
+    def _refresh_status(self) -> None:
+        n = len(self.project.visible)
+        self.map_status.configure(text="Carte vide" if n == 0 else f"Carte : {n} scan{'s' if n > 1 else ''}")
+        self.next_hint.configure(text="Pose le robot n'importe où (un coin, par exemple), puis Scanner." if n == 0 else
+                                 "Déplace un peu le robot (≤ 1 m, ≤ 45°), puis Scanner : le scan se pose sur la carte.")
+        if self.collection is None:
+            self.capture_btn.configure(text="Scanner  ·  1er scan = référence" if n == 0 else f"Scanner  ·  scan {n + 1}")
 
     def on_project(self) -> None:
-        if self.app.live.running:
-            return
-        n = len(self.project.visible)
-        self.slam_info.configure(text=f"Carte en construction : {n} scan(s). " + (
-            "Capture pour poser le 1er scan (origine)." if n == 0 else
-            "Déplace le robot, puis capture : le scan se pose sur les précédents."), text_color=S.MUTED)
+        self._refresh_status()
 
     def enter(self) -> None:
-        self.on_project()
+        self._refresh_status()
         self._start_follow()
 
-    # ------------------------------------------------------------------ carte
+    # ================================================================== carte
     def on_live(self, frame) -> None:
         f = self.app.last_frame
         if f is None:
@@ -374,13 +416,24 @@ class CollectStep(Step):
             if not self.app.live.running:
                 self._start_follow()
             pts = self.app.filters().apply(f.scan).local_points()
-            if len(pts) >= 20:
+            if len(pts) >= MIN_POINTS:
                 self.app.live.submit(pts)
         self.render()
+
+    def _preview_layers(self) -> list:
+        """Aperçu du scan : points communs avec la carte (orange) et partie nouvelle (vert, plus gros)."""
+        scan, step = self.preview[0], self.preview[4]
+        g = local_to_global(self.app.filters().apply(scan).local_points(), scan.pose)
+        if step is None or len(step.common) != len(g):
+            return [(g, S.INITIAL, 10, "o")]
+        return [(g[step.common], S.INITIAL, 9, "o"), (g[~step.common], S.FOUND, 16, "o")]
 
     def render(self) -> None:
         app = self.app
         pts, poses = app.scan_layers(big=False)
+        if self.preview is not None:
+            pts = pts + self._preview_layers()
+            poses = list(poses) + [(self.preview[0].pose, S.INITIAL, True)]
         app.map.draw_overlay(pts, [(trail_segments(self.trail), S.ACCENT, 2.0)], poses)
         app.map.draw_analysis(None, None, [], [], None)
         app.map.draw_robot(self.robot)
@@ -389,11 +442,9 @@ class CollectStep(Step):
         if frame is not None and self.preview is None:
             live = app.filters().apply(frame.scan).with_pose(self.robot)
         app.map.draw_live(live, False, [])
-        if self.preview is not None:
-            app.map.draw_capture(0, app.filters().apply(self.preview[0]), S.INITIAL, True, True)
-        else:
-            app.map.draw_capture(0, None)
-        self.legend("noir = tour en direct · couleurs = scans gardés · orange = aperçu · trait bleu = trajet suivi")
+        app.map.draw_capture(0, None)
+        self.legend("couleurs = scans gardés · noir = tour en direct · aperçu : orange = commun, vert = nouveau · "
+                    "trait bleu = trajet")
 
     def leave(self) -> None:
         self.app.live.stop()

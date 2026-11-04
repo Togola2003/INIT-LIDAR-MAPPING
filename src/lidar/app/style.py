@@ -41,9 +41,20 @@ MONO = "Cascadia Mono"
 RADIUS = 14
 
 
+_FONTS: dict[tuple, ctk.CTkFont] = {}
+
+
 def font(size: int = 13, weight: str = "normal", display: bool = False, mono: bool = False) -> ctk.CTkFont:
+    """Police partagée : une seule par (taille, graisse, famille), jamais détruite.
+
+    Créer une police à chaque étiquette était lent, et surtout dangereux : quand Python libérait une vieille
+    police dans le fil de la localisation en direct, Tk (qui n'accepte que le fil de l'interface) bloquait
+    ce fil pour toujours."""
     family = MONO if mono else FONT_DISPLAY if display else FONT
-    return ctk.CTkFont(family=family, size=size, weight=weight)
+    key = (family, size, weight)
+    if key not in _FONTS:
+        _FONTS[key] = ctk.CTkFont(family=family, size=size, weight=weight)
+    return _FONTS[key]
 
 
 # ---------------------------------------------------------------------- composants
