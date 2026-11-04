@@ -76,6 +76,8 @@ par étape.
 | après-midi | Suivi en direct robuste : prédiction par les commandes (odométrie), fenêtre de recherche qui grandit avec le mouvement, tours douteux ignorés, trajet coupé aux relocalisations ; `place_scan` | `e99c449` |
 | après-midi | **Cartographie pas à pas** dans Récolter (chaque scan posé sur les précédents, recouvrement affiché, une couleur par scan, optimisation finale) ; suivi en arrière-plan (`app/live.py`), aussi dans Localiser. Essai simulé : scans posés à 2 cm près | `db6204c` |
 
+| fin d'après-midi | Consigne du prof : **SLAM pas à pas** (scan = référence, petit déplacement, rescan localisé par les points communs, partie nouvelle ajoutée). Module `slam.py` (grid map puis ICP fin, commun / nouveau, boucles), interface centrée dessus, doc [docs/SLAM.md](docs/SLAM.md). Simulation : tour complet de 18 scans, chaque pose à ≤ 1 cm | `4128361`, `e4e1550` |
+
 ### Problèmes rencontrés et solutions (Jour 3)
 
 - **Moteurs qui tournent seuls :** broches mises à 0 en tout premier dans `setup()`, et firmware sans la bibliothèque
@@ -86,6 +88,9 @@ par étape.
   tracé, et une recherche globale n'est acceptée que si elle est nette.
 - **Suivi en retard, interface figée :** la localisation tournait dans l'interface. Elle tourne maintenant dans un fil
   à part, toujours sur le dernier tour reçu.
+- **Suivi en direct qui se fige au bout d'un moment :** le ramasse-miettes de Python libérait une police de
+  l'interface depuis le fil de calcul, et Tk (qui n'accepte qu'un seul fil) bloquait ce fil. Trouvé en affichant la
+  pile du fil bloqué. Solution : polices partagées, ramasse-miettes lancé seulement par l'interface.
 - **« Commande non reçue : timed out » :** le robot n'a qu'un petit serveur web, et les demandes de `/scan` et les
   commandes passent l'une après l'autre. Il suffit d'appuyer à nouveau ; chaque mouvement s'arrête de lui-même après
   sa durée (sécurité).

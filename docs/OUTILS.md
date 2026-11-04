@@ -41,33 +41,31 @@ Une fenêtre, trois zones :
 
 | Étape | Ce qu'on y fait |
 |---|---|
-| 1 Récolter | câble USB, **Wi-Fi** (réseau du robot, 192.168.4.1, pilotage I K J L U O, Espace = stop) ou démo. **C** récolte N tours, puis aperçu : garder (Entrée), refaire ou jeter (Échap). **Cartographie pas à pas** (voir ci-dessous). Import de fichiers |
+| 1 Récolter | câble USB, **Wi-Fi** (réseau du robot, 192.168.4.1, pilotage I K J L U O, Espace = stop) ou démo. **SLAM pas à pas** (voir ci-dessous) : Scanner (C), Garder (Entrée), Refaire, Jeter (Échap). Import de fichiers |
 | 2 Nettoyer | filtres du cours (portée, intensité, points isolés). Suppr = supprimer les scans sélectionnés |
 | 3 Recaler | glisser = déplacer, clic droit glissé = tourner, flèches / A E, plusieurs scans en bloc. **Recalage complet**, ICP en bloc, cohérence |
 | 4 Cartes | grid map et carte vectorielle, **retouches comprises**. **✓ Valider cette carte comme référence** : elle est figée et sert à la localisation |
 | 5 Localiser | la carte validée reste **fixe**. **Scan de la liste** ou **fichier importé** : le scan devient un scan libre (orange) qu'on **glisse / tourne** n'importe où (ou 🎲 « perdre au hasard »), puis **◎ Localiser** : il revient se poser sur la carte (animation, vert brillant), sans modifier le projet. **Robot en direct** : chaque tour du lidar est replacé en continu (Wi-Fi, câble ou démo), pilotage sur la même page. Avancé : référence, méthode, comparaison |
 | 6 Exporter | projet `.lidar.json` (retouches comprises), dossier complet, image PNG, carte vectorielle `.txt` |
 
-### Cartographie pas à pas (étape 1, mode principal)
+### SLAM pas à pas (étape 1, mode principal)
 
-1. **1er scan :** pose le robot (un coin de la salle est un bon départ), **C**, puis **Garder**. Ce scan fixe l'origine
-   (0, 0, 0) de la carte.
-2. **Déplace le robot :** avec le pavé de pilotage, ou à la main. Tant que « Suivre le robot en direct » est coché, le
-   robot est localisé sur la carte déjà construite (trait bleu = trajet). Le calcul tourne en arrière-plan :
-   l'interface ne gèle pas.
-3. **Scan suivant :** **C**, le robot à l'arrêt. Le scan est **posé tout seul** sur les scans déjà gardés : d'abord
-   autour de la position suivie (± 1 m, ± 40°), sinon dans toute la carte. L'aperçu affiche le **recouvrement** :
-   la part de ses points qui tombent sur des murs déjà connus.
-   - **≥ 35 % :** placement sûr, **Garder** ; le scan prend sa couleur.
-   - **Moins :** trop peu de parties communes ; **Refaire** plus près d'une zone déjà scannée.
-4. **Recommence,** par petits pas (≤ 1 m, ≤ 45°) : chaque scan doit voir une bonne partie de ce qu'ont vu les
-   précédents.
-5. **À la fin :** **Optimiser toute la carte (fermer les boucles)** recale toutes les poses ensemble. L'erreur
-   accumulée de proche en proche est répartie. Ensuite, Nettoyer → Cartes → Valider.
+Détails, méthode et références : **[docs/SLAM.md](SLAM.md)**.
 
-**Pourquoi l'échelle reste juste :** le lidar mesure des distances en mètres. Poser un scan, c'est seulement le
-tourner et le déplacer (x, y, θ), jamais l'agrandir. La carte ne peut donc pas devenir trop grande ou trop petite.
-Le seul risque est un scan **mal posé**, d'où le recouvrement affiché et l'optimisation finale.
+1. **Scanner** (C), le robot immobile, puis **Garder** (Entrée). Ce 1er scan est la **référence** (origine 0, 0, 0).
+2. **Déplace un peu le robot,** au pavé de pilotage ou à la main. Le trait bleu montre le trajet suivi en direct, et
+   le calcul tourne en arrière-plan.
+3. **Scanner :** le scan est **localisé** sur la référence. Dans l'aperçu :
+   - **orange** = points communs, **vert** = partie nouvelle ;
+   - **points communs ≥ 35 % :** ✓, **Garder** ;
+   - **moins :** ⚠, rapproche-toi d'une zone déjà scannée, puis **Refaire**.
+4. **Recommence** par petits pas (≤ 1 m, ≤ 45°) jusqu'à toute la salle.
+5. **« ↻ Boucle refermée » :** le robot retrouve des scans anciens. **Optimiser toute la carte** recale toutes les
+   poses ensemble (ou à la fin).
+6. **Ensuite :** Nettoyer → Cartes → Valider.
+
+**Pourquoi l'échelle reste juste :** le lidar mesure en mètres. Poser un scan, c'est le tourner et le déplacer, jamais
+l'agrandir.
 
 **Odométrie par les commandes :** le robot n'a pas de codeurs. LidarLab estime le déplacement à partir des commandes
 envoyées (durée × vitesse, `robot.command_motion`) et s'en sert comme point de départ de la recherche. Les constantes
@@ -86,6 +84,7 @@ envoyées (durée × vitesse, `robot.command_motion`) et s'en sert comme point d
 - `app/tools.py` : les outils de la carte ;
 - `app/steps/` : une étape par fichier ;
 - `app/live.py` : la localisation en direct, dans un fil à part ;
+- `slam.py` (bibliothèque) : localiser un scan sur la carte en construction, commun / nouveau, boucles ;
 - `app/window.py` : la fenêtre, la sélection, la connexion et les caches.
 
 Changer d'interface, par exemple pour une version web, ne touche ni au projet ni aux algorithmes.

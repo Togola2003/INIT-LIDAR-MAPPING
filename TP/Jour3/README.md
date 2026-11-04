@@ -3,7 +3,7 @@
 | Attendu | État |
 |---|---|
 | Finaliser les jours 1 et 2 | ✅ tags `jour1` et `jour2` |
-| Combiner localisation + cartographie (début de SLAM) | 🟡 cartographie pas à pas dans LidarLab, validée en simulation (scans posés à 2 cm près) ; à essayer en salle |
+| Combiner localisation + cartographie : SLAM pas à pas | 🟡 fait dans LidarLab, validé en simulation (18 scans, ≤ 1 cm) ; à faire en salle |
 | Produire une **carte complète de la salle de classe** | 🟡 cartes des 02/11 (16 scans) et 03/11 (13 scans), recalées à 2-3 cm |
 | Bonus : déplacer le robot et construire la carte en temps réel | 🟡 robot Wi-Fi piloté + suivi en direct prêts (non testés sur le vrai robot) |
 
@@ -35,31 +35,30 @@ Procédure complète, avec le tableau à remplir : **[firmware/README.md](../../
 - les cas où le robot se perd ;
 - la vitesse réelle du robot pour une commande donnée (utile pour l'odométrie).
 
-## 2. Le SLAM « stop and go » (fait le 04/11)
+## 2. Le SLAM pas à pas (consigne du prof, fait le 04/11)
 
-Méthode choisie : le robot **s'arrête** pour chaque scan. Un scan pris à l'arrêt (10 tours combinés) est bien plus
-net qu'un tour pris en roulant, donc plus facile à poser.
+Consigne :
+1. scanner une 1re fois : c'est la référence ;
+2. déplacer un peu le robot et rescanner : le scan se localise grâce aux points communs ;
+3. ajouter sa partie nouvelle : référence + scan = nouvelle référence ;
+4. continuer par petits pas jusqu'à la salle complète.
 
-1. **1er scan = origine** de la carte.
-2. Entre deux scans, le robot est **suivi en direct** sur la carte déjà construite (`localization/tracking.py`) :
-   - **prédiction :** le mouvement commandé (odométrie par les commandes, `robot.command_motion`) ;
-   - **correction :** scan matching autour de la prédiction ;
-   - un tour douteux est ignoré (le trajet ne saute plus) ; après 3 tours douteux, recherche dans toute la carte ;
-   - calcul dans un fil à part (`app/live.py`) : l'interface ne gèle plus.
-3. **Nouveau scan :** posé sur les scans gardés (`place_scan`), à partir de la position suivie, avec son
-   **recouvrement** affiché. Gardé, il agrandit la carte, et le suivi repart sur la carte agrandie.
-4. **Fermeture de boucle :** « Optimiser toute la carte » (`matching.align_best`) recale toutes les poses ensemble.
+**Méthode, choix grid / vectoriel, références :** [docs/SLAM.md](../../docs/SLAM.md).
 
-**Essai simulé** (robot factice dans une salle de 6 × 4 m, 3 scans) :
-- scan posé après un déplacement suivi de 63 cm / 20° : erreur **2 cm, 0,1°** ;
-- scan posé après un déplacement « à la main » de 2,1 m / 70°, sans suivi : erreur **2 cm, 0°** ;
-- suivi en direct : environ 20 ms par tour.
+| Ce qui est fait | Où |
+|---|---|
+| Localiser un scan sur la référence : grid map (grossier), puis ICP (fin) | `src/lidar/slam.py` |
+| Points communs / partie nouvelle, détection de boucle | `src/lidar/slam.py` |
+| Interface : Scanner → aperçu orange / vert → Garder | LidarLab, étape 1 |
+| Suivi en direct entre deux scans, sans figer l'interface | `src/lidar/app/live.py` |
+| Optimisation de toutes les poses (fermeture de boucle) | `matching.refine_global` |
+| Tests : tour complet de la salle simulée (18 scans, ≤ 1 cm) | `tests/test_slam.py` |
 
 **Procédure en salle :**
 1. départ dans un coin ;
 2. petits pas (≤ 1 m, ≤ 45°), toujours avec une bonne partie commune avec les scans précédents ;
-3. tour de la salle, puis le milieu ;
-4. revenir près du 1er scan à la fin, puis optimiser : c'est la fermeture de boucle.
+3. tour de la salle, sous les tables, puis le milieu ;
+4. revenir près du 1er scan, puis Optimiser.
 
 **Mesures à faire en salle :**
 - qualité de la carte finale (murs fins, écart entre scans) ;
