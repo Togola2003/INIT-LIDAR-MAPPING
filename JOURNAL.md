@@ -65,6 +65,10 @@ par étape.
 - **Robot réel en Wi-Fi :** testé seulement contre un faux robot qui répond comme l'ESP32. À essayer le 04/11.
 - **Méthode probabiliste** (filtre de particules) : non faite (facultative).
 
-## Jour 3 : mercredi 04/11/2026, à venir
+## Jour 3 : mercredi 04/11/2026
+
+| Heure | Étape | Commit |
+|---|---|---|
+| matin | Problème : les moteurs tournent tout seuls avec n'importe quel programme. Causes : fils moteurs en direct sur l'ESP32 (broches flottantes ou hautes au démarrage), et D19 utilisée par l'I2C du firmware RobotControl. **Firmware 01** (moteurs arrêtés + identification des fils) et **firmware 02** (lidar + moteurs + Wi-Fi + télécommande téléphone, compatible LidarLab), compilés tous les deux | voir `git log` |
 
 Plan : [TP/Jour3/README.md](TP/Jour3/README.md).

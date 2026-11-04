@@ -63,7 +63,7 @@ src/lidar/scope/    LidarScope (Jour 1) + briques communes (carte, session, expo
 src/lidar/studio/   LidarStudio (cartographie pas à pas)
 tests/              tests pytest (dont les cas limites de la découpe de segments)
 lecons/             initiation au LD06 : une leçon = un script
-firmware/           programme ESP32 qui envoie les scans en CSV complet
+firmware/           programmes ESP32 : scans CSV (Jour 1), test des moteurs, robot complet Wi-Fi + télécommande téléphone (voir firmware/README.md)
 data/simu/, data/exercice8/   scans simulés (vérité connue)
 docs/               mode d'emploi des outils, notes d'algorithmes
 

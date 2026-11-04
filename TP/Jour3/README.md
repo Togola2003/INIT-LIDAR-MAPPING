@@ -15,23 +15,25 @@
 - **Ce qui manque pour le SLAM :** la carte ne s'agrandit pas encore. Le robot se localise, mais ses nouveaux points ne
   sont pas ajoutés à la carte.
 
-## 1. Avant toute chose : tester le vrai robot en Wi-Fi (procédure)
+## 1. Avant toute chose : moteurs et Wi-Fi du vrai robot
 
-1. Téléverser `RESSOURCES/Tools/RobotControl/ESP32RobotControl/ESP32RobotControl.ino` sur l'ESP32. Il crée le
-   réseau Wi-Fi « RobotESP32 », mot de passe `12345678`.
-2. Connecter le PC à ce réseau. Le PC n'a alors plus Internet, c'est normal.
-3. `LidarLab.bat` → étape **1 Récolter** → **Wi-Fi** → adresse `192.168.4.1` → **Connecter**.
-   - **Attendu :** le scan en direct s'affiche en noir et la pastille en haut devient verte.
-   - **Sinon :** vérifier le réseau Wi-Fi du PC, et ouvrir `http://192.168.4.1/ping` dans un navigateur (il doit
-     répondre `OK`).
-4. Petits mouvements avec le pavé ou le clavier (I K J L U O, Espace = stop), durée ≈ 300-400 ms.
-5. Ouvrir le projet, puis étape **4 Cartes** → **Valider**, puis étape **5 Localiser** → **Robot en direct** →
-   **Suivre le robot**.
-6. **À noter pour le compte rendu :**
-   - le taux de tours bien localisés ;
-   - le temps de calcul ;
-   - les cas où il se perd (trop près d'un mur, meubles) ;
-   - la vitesse réelle du robot pour une commande de 300 ms.
+Constat du 04/11 : avec n'importe quel programme téléversé, **les moteurs tournaient tout seuls**.
+- **Cause 1 :** les 8 fils moteurs sont branchés directement sur l'ESP32 (D15, D2, D4, D16, D17, D5, D18, D19), et
+  une broche non réglée flotte ou démarre à l'état haut.
+- **Cause 2 :** le firmware RobotControl du prof est prévu pour une carte moteur en I2C. Il utilise D19, qui est ici
+  le fil m2b.
+
+Procédure complète, avec le tableau à remplir : **[firmware/README.md](../../firmware/README.md)**
+1. `firmware/01_Moteurs_Test` : moteurs arrêtés au démarrage, puis identification de chaque fil (roue, sens).
+2. `firmware/02_LidarRobot_WiFi` : lidar + moteurs + Wi-Fi, même interface que RobotControl (donc compatible LidarLab).
+3. Téléphone : rejoindre le Wi-Fi du robot, puis ouvrir http://192.168.4.1. La télécommande et le scan sont en direct.
+4. LidarLab : Wi-Fi `192.168.4.1` → Connecter, puis Localiser → Robot en direct → Suivre.
+
+**À noter pour le compte rendu :**
+- le tableau fil → roue ;
+- le taux de tours bien localisés et le temps de calcul ;
+- les cas où le robot se perd ;
+- la vitesse réelle du robot pour une commande donnée (utile pour l'odométrie).
 
 ## 2. Ensuite : le SLAM (plan)
 
