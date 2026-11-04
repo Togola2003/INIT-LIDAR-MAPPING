@@ -62,6 +62,46 @@ finale sont là pour ça.
 Le cours le dit aussi : grille d'occupation → « SLAM 2D, navigation au sol » ; carte vectorielle → « SLAM basé sur
 repères ».
 
+## La grid map : une seule fois à la fin, ou scan par scan ? (question du prof)
+
+**Réponse : scan par scan, comme dans le cours** (« Construction d'une grid map », §5 : chaque nouveau scan est
+aligné par scan matching, puis on répète les étapes 2 à 4). Code : `gridmap.update_grid`.
+
+**Ce que fait chaque scan, faisceau par faisceau :**
+1. **Cases traversées** par le faisceau (tracé de Bresenham) : la probabilité d'occupation **baisse**
+   (log-odds + L_traversée, réglage « p(occupé | traversée) » = 0,40, soit −0,41).
+2. **Case d'impact :** la probabilité **monte** (log-odds + L_impact, réglage « p(occupé | impact) » = 0,70,
+   soit +0,85).
+3. Chaque case garde la **somme** de toutes les observations de tous les scans, bornée à ± 4.
+
+**Ce que ça donne quand les scans se recouvrent :**
+- **un mur vu par plusieurs scans** devient de plus en plus sûr (plus noir) ;
+- **un objet déplacé** (chaise, personne) : les faisceaux des scans suivants **traversent** sa place, donc il
+  s'efface ;
+- **une case jamais vue** reste « inconnue » (gris).
+
+**Exemple :** une case touchée par 2 scans et traversée par 3 autres.
+- **Réglages par défaut :** 2 × 0,85 − 3 × 0,41 = +0,48, p = 0,62 → **occupée** (le pied de table reste).
+- **Traversée réglée à 0,30 (−0,85) :** 1,70 − 2,54 = −0,84, p = 0,30 → **libre** (le pied de table disparaît).
+
+C'est ce que montrent les deux curseurs de l'étape **Cartes** : ils changent le poids d'un impact et d'une
+traversée, donc certains murs, tables ou chaises apparaissent ou disparaissent.
+
+**« Une fois à la fin » ou « après chaque scan », c'est la même carte :** une addition ne dépend pas de l'ordre. La
+mise à jour est faite après chaque scan, et rejouer tous les scans à la fin donne exactement la même grid map
+(vérifié dans `tests/test_gridmap.py`).
+
+**Dans LidarLab :**
+- **Pendant le SLAM,** à chaque « Garder », la grid map de la référence est recalculée en rejouant les scans un
+  par un (`slam.SlamMap`). Elle sert à localiser le scan suivant.
+  - **Pourquoi la recalculer au lieu d'ajouter seulement le dernier scan :**
+    - la grille doit **s'agrandir** quand le robot découvre une nouvelle zone ;
+    - après **« Optimiser toute la carte »**, les poses changent, et les faisceaux doivent être retracés depuis
+      les poses corrigées.
+  - Google Cartographer fait pareil : ses sous-cartes sont redessinées après l'optimisation.
+- **À l'étape Cartes,** la grid map finale est construite de la même façon, avec les curseurs impact / traversée
+  et l'état initial (inconnu, libre, occupé).
+
 ## Les grandes familles de SLAM 2D (pour situer notre méthode)
 
 | Méthode | Principe | Notre code |

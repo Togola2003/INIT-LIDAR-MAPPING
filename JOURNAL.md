@@ -71,12 +71,12 @@ par étape.
 |---|---|---|
 | matin | Problème : les moteurs tournent tout seuls avec n'importe quel programme. Causes : fils moteurs en direct sur l'ESP32 (broches flottantes ou hautes au démarrage), et D19 utilisée par l'I2C du firmware RobotControl. **Firmware 01** (moteurs arrêtés + identification des fils) et **firmware 02** (lidar + moteurs + Wi-Fi + télécommande téléphone, compatible LidarLab), compilés tous les deux | `6458404` → `4abdfad` |
 | matin | Test 01 sur le robot : relevé fil → roue (M1 avant droite, M2 avant gauche, M3 arrière gauche, M4 arrière droite ; sur les roues de droite, c'est le fil « b » qui fait avancer), recopié dans `moteurs.h` | voir `git log` |
-
 | midi | Rotation inversée sur le vrai robot (« avancer » bon, « tourner à gauche » tourne à droite) : le relevé avait été fait robot vu de face, gauche et droite échangés. `moteurs.h` corrigé | `409a6e3` |
 | après-midi | Suivi en direct robuste : prédiction par les commandes (odométrie), fenêtre de recherche qui grandit avec le mouvement, tours douteux ignorés, trajet coupé aux relocalisations ; `place_scan` | `e99c449` |
 | après-midi | **Cartographie pas à pas** dans Récolter (chaque scan posé sur les précédents, recouvrement affiché, une couleur par scan, optimisation finale) ; suivi en arrière-plan (`app/live.py`), aussi dans Localiser. Essai simulé : scans posés à 2 cm près | `db6204c` |
-
 | fin d'après-midi | Consigne du prof : **SLAM pas à pas** (scan = référence, petit déplacement, rescan localisé par les points communs, partie nouvelle ajoutée). Module `slam.py` (grid map puis ICP fin, commun / nouveau, boucles), interface centrée dessus, doc [docs/SLAM.md](docs/SLAM.md). Simulation : tour complet de 18 scans, chaque pose à ≤ 1 cm | `4128361`, `e4e1550` |
+| 13 h 09 → 14 h 07 | ✅ **Essai en salle réussi** : SLAM pas à pas sur le vrai robot. 1er scan dans un coin, puis petits déplacements : chaque scan se localise et ajoute sa partie nouvelle. **93 scans**, toute la salle (≈ 12 × 9 m). Session : [data/salle_jour3/slam_salle_04-11.lidar.json](data/salle_jour3/slam_salle_04-11.lidar.json) | ce commit |
+| fin de séance | Question du prof : la grid map est-elle faite une fois à la fin ou scan par scan ? Réponse (scan par scan, log-odds : traversée −, impact +, les scans qui se recouvrent renforcent les murs et effacent ce qui a bougé ; même résultat dans n'importe quel ordre) : [docs/SLAM.md](docs/SLAM.md), test `tests/test_gridmap.py`. **Version validée marquée par le tag `jour3`** | ce commit |
 
 ### Problèmes rencontrés et solutions (Jour 3)
 
@@ -95,10 +95,11 @@ par étape.
   commandes passent l'une après l'autre. Il suffit d'appuyer à nouveau ; chaque mouvement s'arrête de lui-même après
   sa durée (sécurité).
 
-### Reste à faire (Jour 3)
+### Suite (compte rendu à rendre pour le 20/11)
 
-- Re-téléverser `02_LidarRobot_WiFi` et vérifier les 6 mouvements (← → compris).
-- Mesurer la vitesse réelle (m/s et °/s) pour régler l'odométrie dans `robot.py`.
-- Carte complète de la salle en cartographie pas à pas, puis comparaison avec les cartes des Jours 1 et 2.
+- Compte rendu du Jour 3 et conclusion personnelle.
+- Présentation et rapidité de l'application : améliorations possibles, **sans perdre la version validée** :
+  le tag `jour3` pointe sur la version qui marche en salle (voir le README, « Versions »).
+- Optionnel : mesurer la vitesse réelle (m/s et °/s) pour régler l'odométrie dans `robot.py`.
 
 Plan : [TP/Jour3/README.md](TP/Jour3/README.md).

@@ -35,7 +35,7 @@ Le dépôt contient **deux choses différentes** qui servent le même objectif :
 | Nuages de points → segments → carte vectorielle | ✅ | [Fig. 6-7](TP/Jour1/figures/fig7_carte_vectorielle.png), `segments.py`, `vectormap.py` |
 | Localisation sur grid map / carte vectorielle / scan de référence | ✅ | 10 méthodes comparées sur les scans enregistrés (99 % de réussite), localisation globale et en direct dans LidarLab ([Jour 2](TP/Jour2/COMPTE_RENDU.md)) |
 | Cartographier la salle et y localiser le robot | 🟡 | cartes recalées à 2-3 cm, localisation en direct prête ; robot Wi-Fi et SLAM au [Jour 3](TP/Jour3/README.md) |
-| Utiliser git | ✅ | un commit par étape, [JOURNAL.md](JOURNAL.md) (avec les problèmes rencontrés), tags `jour1` et `jour2` |
+| Utiliser git | ✅ | un commit par étape, [JOURNAL.md](JOURNAL.md) (avec les problèmes rencontrés), tags `jour1`, `jour2` et `jour3` |
 
 ## Démarrer
 
@@ -73,5 +73,13 @@ data/salle/         mes 16 scans réels du 02/11 (bruts + poses corrigées)
 data/salle_jour2/   13 scans du 03/11 (9 avec intensité), poses recalées : référence du Jour 2
 JOURNAL.md          traçabilité : quoi, quand, quel commit
 ```
+
+## Versions
+
+Chaque fin de journée validée est marquée par un **tag git**. Le tag **`jour3`** est la version qui a fonctionné en
+salle le 04/11 (SLAM pas à pas, 93 scans). Si une modification ultérieure plaît moins, on peut toujours la
+retrouver :
+- **sur GitHub :** bouton des branches → onglet **Tags** → `jour3` (ou « Download ZIP ») ;
+- **en local :** `git checkout jour3` pour la consulter, puis `git checkout main` pour revenir.
 
 Les supports de cours (`RESSOURCES/`, `Cartographie-*/`, `Localisation-*/`, PDF) restent en local et ne sont pas versionnés.

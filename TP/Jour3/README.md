@@ -3,9 +3,9 @@
 | Attendu | État |
 |---|---|
 | Finaliser les jours 1 et 2 | ✅ tags `jour1` et `jour2` |
-| Combiner localisation + cartographie : SLAM pas à pas | 🟡 fait dans LidarLab, validé en simulation (18 scans, ≤ 1 cm) ; à faire en salle |
-| Produire une **carte complète de la salle de classe** | 🟡 cartes des 02/11 (16 scans) et 03/11 (13 scans), recalées à 2-3 cm |
-| Bonus : déplacer le robot et construire la carte en temps réel | 🟡 robot Wi-Fi piloté + suivi en direct prêts (non testés sur le vrai robot) |
+| Combiner localisation + cartographie : SLAM pas à pas | ✅ validé en simulation (18 scans, ≤ 1 cm) **et en salle le 04/11** |
+| Produire une **carte complète de la salle de classe** | ✅ SLAM pas à pas du 04/11 : 93 scans, toute la salle ([session](../../data/salle_jour3/slam_salle_04-11.lidar.json)) |
+| Bonus : déplacer le robot et construire la carte en temps réel | ✅ robot piloté en Wi-Fi, suivi en direct entre deux scans, carte construite au fur et à mesure |
 
 ## D'où on part
 
