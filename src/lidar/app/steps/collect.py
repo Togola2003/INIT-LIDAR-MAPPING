@@ -1,18 +1,36 @@
-"""Étape 1 · Récolter : relier le robot, placer sa pose, récolter N tours, garder ou refaire. Ou importer."""
+"""Étape 1 · Récolter : relier le robot, récolter N tours, garder ou refaire. Ou importer.
+
+Cartographie pas à pas (SLAM « stop and go ») :
+  1. le 1er scan fixe l'origine de la carte (0, 0, 0) ;
+  2. on déplace le robot (pavé de pilotage, ou à la main) ; s'il est suivi en direct, sa position est
+     mise à jour sur la carte déjà construite (localisation en arrière-plan, app/live.py) ;
+  3. on capture : le nouveau scan (pris à l'arrêt, N tours) est POSÉ sur les scans déjà gardés
+     (scan matching autour de la position suivie, sinon dans toute la carte), avec sa propre couleur ;
+  4. on recommence ; à la fin, « Optimiser toute la carte » corrige toutes les poses ensemble.
+Les distances du lidar sont en mètres : la carte garde la bonne échelle ; seule la pose (x, y, θ) de
+chaque scan est cherchée, grâce aux parties communes avec les scans précédents.
+"""
 
 from __future__ import annotations
 
 import customtkinter as ctk
 
 from ...geometry import Pose
+from ...localization.grid import LikelihoodField, build_pyramid
+from ...localization.tracking import place_scan
+from ...refmap import build_reference
 from ...scope.collector import COMBINE_MODES, Collection, finish
 from ...robot import DEFAULT_HOST
 from ...scope.sources import FORMAT_TELEPLOT
 from .. import project as P
 from .. import style as S
 from ..components import PilotPad
+from ..live import trail_segments
 from ..tools import PoseTool
 from .base import Step
+
+GOOD_OVERLAP = 0.35        # part des points du nouveau scan sur les murs déjà connus pour un placement sûr
+
 
 BAUDS = ["115200", "230400", "460800", "921600"]
 SOURCES = ["Câble USB", "Wi-Fi", "Démo"]
@@ -31,6 +49,9 @@ class CollectStep(Step):
         self.robot = Pose()
         self.collection: Collection | None = None
         self.preview = None
+        self.trail: tuple = ()          # trajet suivi en direct (Pose ou None = coupure)
+        self._map_key = None
+        self._map = None                # (carte de référence, champ, pyramide) des scans gardés
 
     # ------------------------------------------------------------------ panneau
     def build(self, panel) -> None:
@@ -62,8 +83,20 @@ class CollectStep(Step):
         self.live_info.pack(fill="x", pady=(4, 0))
 
         self.pilot_card = S.Card(panel, "Piloter le robot (Wi-Fi)", "Chaque appui = un mouvement de la durée choisie.")
-        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status)
+        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status, self.app.on_command)
         self.pad.pack(fill="x")
+
+        card = S.Card(panel, "Cartographie pas à pas", "1. capture (le 1er scan = origine)  2. déplace le robot  "
+                                                       "3. capture : le scan se pose sur les précédents  4. recommence")
+        card.pack(fill="x", pady=(0, 10))
+        b = card.body
+        self.auto = S.toggle(b, "Poser chaque scan sur les précédents", self.render, on=True)
+        self.auto.pack(anchor="w", pady=2)
+        self.follow = S.toggle(b, "Suivre le robot en direct entre deux scans", self._follow_changed, on=True)
+        self.follow.pack(anchor="w", pady=2)
+        self.slam_info = S.hint(b, "")
+        self.slam_info.pack(fill="x", pady=(2, 0))
+        S.button(b, "Optimiser toute la carte (fermer les boucles)", self.optimize, "ghost").pack(fill="x", pady=(6, 0))
 
         card = S.Card(panel, "Capture", "C = récolter · C de nouveau = arrêter · Entrée = garder · Échap = jeter")
         card.pack(fill="x", pady=(0, 10))
@@ -152,6 +185,7 @@ class CollectStep(Step):
     def _placed(self, pose: Pose) -> None:
         self.app.set_tool(None)
         self.set_robot(pose)
+        self._start_follow()             # le suivi repart de la pose donnée à la main
 
     def set_robot(self, pose: Pose) -> None:
         self.robot = pose
@@ -161,6 +195,7 @@ class CollectStep(Step):
     def apply_pose_field(self) -> None:
         try:
             self.set_robot(Pose(*self.pose_field.get()))
+            self._start_follow()
         except ValueError:
             self.app.status("x, y et θ doivent être des nombres.")
 
@@ -192,15 +227,35 @@ class CollectStep(Step):
             self.app.status("Aucun tour reçu : récolte annulée.")
             return
         scan, info = finish(col, self.combine.get())
+        scan, rows = self._place(scan)
         self.preview = (scan, info, tuple(f.raw for f in col.frames), col.frames[-1].fmt)
         noise = info["bruit_m"]
         quality = "—" if noise is None else ("bon" if noise < 0.02 else "moyen")
-        self.preview_info.show([("Tours", f"{info['tours']} / {info['voulus']}"), ("Durée", f"{info['duree_s']} s"),
-                                ("Points", f"{info['points']}"),
-                                ("Bruit", "—" if noise is None else f"{noise * 100:.1f} cm ({quality})")])
+        self.preview_info.show(rows + [("Tours", f"{info['tours']} / {info['voulus']}"),
+                                       ("Points", f"{info['points']}"),
+                                       ("Bruit", "—" if noise is None else f"{noise * 100:.1f} cm ({quality})")])
         self.preview_box.pack(fill="x", pady=(6, 0))
         self.app.status("Aperçu prêt : Garder (Entrée), Refaire, ou Jeter (Échap).")
         self.render()
+
+    def _place(self, scan):
+        """Pose du nouveau scan : sur les scans déjà gardés (SLAM), sinon à la pose du robot."""
+        if not self.auto.get():
+            return scan, []
+        m = self.current_map()
+        if m is None:
+            pose = self.robot if self.project.captures else Pose()
+            return scan.with_pose(pose), [("Placement", "1er scan : origine de la carte")]
+        self.app.status("Pose du scan sur la carte…")
+        self.app.root.update_idletasks()
+        ref, field, pyramid = m
+        pts = self.app.filters().apply(scan).local_points()
+        if len(pts) < 20:
+            return scan, [("Placement", "⚠ trop peu de points : posé à la pose du robot")]
+        pl = place_scan(pts, self.robot, ref.grid, ref.segments, field, pyramid)
+        ok = pl.inliers >= GOOD_OVERLAP and not pl.ambiguous
+        note = "✓" if ok else "⚠ faible : rapproche-toi d'une zone déjà scannée, ou Refaire"
+        return scan.with_pose(pl.pose), [("Posé", pl.how), ("Recouvrement", f"{pl.inliers:.0%} {note}")]
 
     def keep(self) -> None:
         if self.preview is None:
@@ -209,7 +264,11 @@ class CollectStep(Step):
         self.drop(quiet=True)
         new, nums = P.add_scans(self.project, [("", scan)], source=fmt, raw=raw)
         self.app.sel, self.app.primary = {nums[0]}, nums[0]
-        self.app.apply(new, f"Scan {nums[0]} gardé : {info['points']} points, {info['tours']} tours.")
+        p = scan.pose
+        self.app.apply(new, f"Scan {nums[0]} gardé à ({p.x:+.2f} m, {p.y:+.2f} m, {p.theta_deg:+.0f}°), "
+                            f"{info['points']} points. Déplace le robot, puis capture à nouveau.")
+        self.set_robot(p)
+        self._start_follow()
 
     def redo(self) -> None:
         self.drop(quiet=True)
@@ -237,6 +296,72 @@ class CollectStep(Step):
     def reset(self) -> None:
         self.drop(quiet=True)
         self.collection = None
+        self.robot, self.trail, self._map_key, self._map = Pose(), (), None, None
+        self.app.live.stop()
+
+    # ------------------------------------------------------------------ carte en construction, suivi
+    def current_map(self):
+        """Carte des scans déjà gardés (grille + murs) et son champ de vraisemblance ; None sans scan.
+        Gardée en cache tant que les scans, leurs poses et les filtres ne changent pas."""
+        caps = self.project.visible
+        if not caps:
+            return None
+        key = (tuple((c.number, id(c.scan.ranges_m), c.scan.pose) for c in caps), self.project.wall_edits,
+               self.app.filters())
+        if key != self._map_key:
+            ref = build_reference([self.app.filtered(c) for c in caps],
+                                  [c.title for c in caps], self.project.wall_edits)
+            field = LikelihoodField.from_grid(ref.grid)
+            self._map, self._map_key = (ref, field, build_pyramid(field)), key
+        return self._map
+
+    def _start_follow(self) -> None:
+        """(Re)lance le suivi en direct sur la carte actuelle, depuis la pose du robot."""
+        if not (self.follow.get() and self.app.source is not None and self.app.step is self):
+            self.app.live.stop()
+            return
+        m = self.current_map()
+        if m is None:
+            return
+        ref, field, pyramid = m
+        self.app.live.start(ref.grid, ref.segments, self.robot, field, pyramid)
+        self.trail = (self.robot,)
+
+    def _follow_changed(self) -> None:
+        self._start_follow()
+        if not self.follow.get():
+            self.trail = ()
+        self.render()
+
+    def on_track(self, result) -> None:
+        st = result.step
+        if st.mode in ("suivi", "global"):
+            self.robot = st.pose
+            self.pose_field.set(st.pose.x, st.pose.y, st.pose.theta_deg)
+        self.trail = result.trail
+        color = S.SUCCESS if st.mode == "suivi" else S.WARN
+        self.slam_info.configure(text=f"Robot : {st.mode} · {st.inliers:.0%} des points sur la carte · "
+                                      f"{st.time_s * 1000:.0f} ms", text_color=color)
+        self.render()
+
+    def optimize(self) -> None:
+        if len(self.project.visible) < 2:
+            self.app.status("Il faut au moins deux scans pour optimiser la carte.")
+            return
+        self.app.steps[2].align_full()
+        self._start_follow()
+
+    def on_project(self) -> None:
+        if self.app.live.running:
+            return
+        n = len(self.project.visible)
+        self.slam_info.configure(text=f"Carte en construction : {n} scan(s). " + (
+            "Capture pour poser le 1er scan (origine)." if n == 0 else
+            "Déplace le robot, puis capture : le scan se pose sur les précédents."), text_color=S.MUTED)
+
+    def enter(self) -> None:
+        self.on_project()
+        self._start_follow()
 
     # ------------------------------------------------------------------ carte
     def on_live(self, frame) -> None:
@@ -245,12 +370,18 @@ class CollectStep(Step):
             return
         fmt = "intensité ✓" if f.fmt != FORMAT_TELEPLOT else "sans intensité (Teleplot)"
         self.live_info.show([("Points du tour", str(int((f.scan.ranges_m > 0).sum()))), ("Format", fmt)])
+        if self.follow.get() and self.project.visible and self.collection is None and self.preview is None:
+            if not self.app.live.running:
+                self._start_follow()
+            pts = self.app.filters().apply(f.scan).local_points()
+            if len(pts) >= 20:
+                self.app.live.submit(pts)
         self.render()
 
     def render(self) -> None:
         app = self.app
         pts, poses = app.scan_layers(big=False)
-        app.map.draw_overlay(pts, [], poses)
+        app.map.draw_overlay(pts, [(trail_segments(self.trail), S.ACCENT, 2.0)], poses)
         app.map.draw_analysis(None, None, [], [], None)
         app.map.draw_robot(self.robot)
         frame = app.last_frame
@@ -262,9 +393,10 @@ class CollectStep(Step):
             app.map.draw_capture(0, app.filters().apply(self.preview[0]), S.INITIAL, True, True)
         else:
             app.map.draw_capture(0, None)
-        self.legend("● noir = direct · ● couleurs = scans gardés · ● orange = aperçu · clic = placer le robot")
+        self.legend("noir = tour en direct · couleurs = scans gardés · orange = aperçu · trait bleu = trajet suivi")
 
     def leave(self) -> None:
+        self.app.live.stop()
         self.app.map.draw_live(None, False, [])
         self.app.map.draw_capture(0, None)
         self.app.map.robot_dot.set_data([], [])

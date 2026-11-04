@@ -66,9 +66,10 @@ class PilotPad(ctk.CTkFrame):
 
     KEYS = {"i": "forward", "k": "backward", "j": "left", "l": "right", "u": "rotateleft", "o": "rotateright"}
 
-    def __init__(self, master, get_client: Callable[[], object], on_status: Callable[[str], None]) -> None:
+    def __init__(self, master, get_client: Callable[[], object], on_status: Callable[[str], None],
+                 on_move: Callable[[str, int, int], None] | None = None) -> None:
         super().__init__(master, fg_color="transparent")
-        self.get_client, self.on_status = get_client, on_status
+        self.get_client, self.on_status, self.on_move = get_client, on_status, on_move
         pad = ctk.CTkFrame(self, fg_color="transparent")
         pad.pack()
         layout = ((0, 0, "⟲", "rotateleft"), (0, 1, "↑", "forward"), (0, 2, "⟳", "rotateright"),
@@ -101,9 +102,13 @@ class PilotPad(ctk.CTkFrame):
         if client is None:
             self.on_status("Pilotage impossible : le robot n'est pas connecté en Wi-Fi (étape 1).")
             return
-        if not client.move(action, int(self.duration.get())):
+        ms = int(self.duration.get())
+        if not client.move(action, ms):
             self.on_status("Le robot exécute encore la commande précédente.")
-        elif client.last_error:
+            return
+        if self.on_move:
+            self.on_move(action, ms, int(self.speed.get()))      # odométrie : mouvement prévu
+        if client.last_error:
             self.on_status(f"Commande non reçue : {client.last_error}")
 
     def stop(self) -> None:

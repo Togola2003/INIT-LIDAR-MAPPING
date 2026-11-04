@@ -143,3 +143,39 @@ def test_place_scan_on_previous_scans():
     for res in (near, blind):
         pos, ang = pose_error(res.pose, truth)
         assert pos < 0.05 and ang < 2.0 and res.inliers > 0.6
+
+
+def test_live_localizer_tracks_in_background():
+    import time
+
+    from lidar.app.live import LiveLocalizer, trail_segments
+    from lidar.robot import Odometry
+    ref = _room_reference()
+    live = LiveLocalizer(Odometry())
+    start = Pose(2.0, 2.2, 10)
+    live.start(ref.grid, ref.segments, start)
+    assert live.running
+    truth = Pose(2.1, 2.25, 12)
+    live.submit(simulate_scan(truth, walls=WALLS, noise_m=0.005, seed=3).filtered().local_points())
+    res = None
+    for _ in range(100):                        # le calcul se fait dans un autre fil
+        res = live.poll()
+        if res is not None:
+            break
+        time.sleep(0.05)
+    assert res is not None and res.step.mode == "suivi"
+    err, _ = pose_error(res.step.pose, truth)
+    assert err < 0.05
+    assert len(trail_segments(res.trail)) == 1   # départ -> nouvelle pose
+    live.stop()
+    assert not live.running
+    live.start(ref.grid, ref.segments, start)   # redémarrage juste après un arrêt
+    assert live.running
+    live.close()
+
+
+def test_trail_segments_skip_breaks():
+    from lidar.app.live import trail_segments
+    a, b, c, d = Pose(0, 0, 0), Pose(1, 0, 0), Pose(5, 5, 0), Pose(6, 5, 0)
+    segs = trail_segments((a, b, None, c, d))
+    assert [(s.x1, s.x2) for s in segs] == [(0, 1), (5, 6)]   # pas de trait qui traverse la salle

@@ -22,11 +22,12 @@ from ..mapedit import apply_to_grid, apply_to_segments
 from ..scope.mapping import MapParams, build_maps
 from ..scope.mapview import Editor, MapView
 from ..scope.processing import Filters
-from ..robot import WifiSource
+from ..robot import Odometry, WifiSource
 from ..scope.sources import DemoSource, MapDemoSource, SerialSource, list_ports
 from . import project as P
 from . import style as S
 from .components import ScanList
+from .live import LiveLocalizer
 from .steps import STEPS
 from .tools import RectTool, WallTool
 
@@ -47,6 +48,8 @@ class LidarLab:
         self.events: queue.Queue = queue.Queue()
         self.source = None
         self.recent: collections.deque = collections.deque(maxlen=30)
+        self.odometry = Odometry()                       # mouvement commandé, prédiction du suivi
+        self.live = LiveLocalizer(self.odometry)        # localisation en direct, en arrière-plan
         self._filtered: dict = {}
         self._maps: dict = {}
         self.tool = None
@@ -513,6 +516,7 @@ class LidarLab:
         if self.source:
             self.source.stop()
             self.source = None
+        self.live.stop()
         self.recent.clear()
         self.conn_pill.configure(text="  ●  Robot non connecté  ", text_color=S.MUTED)
 
@@ -539,13 +543,20 @@ class LidarLab:
         if got is not None and self.source is not None:
             self.conn_pill.configure(text=f"  ●  {self.source_label}  ", text_color=S.SUCCESS)
             self.step.on_live(got)
+        res = self.live.poll()
+        if res is not None:
+            self.step.on_track(res)
         self._tick_job = self.root.after(TICK_MS, self._tick)
+
+    def on_command(self, action: str, ms: int, speed: int) -> None:
+        self.odometry.add(action, ms, speed)
 
     def quit(self) -> None:
         if self.store.dirty and not messagebox.askyesno("Quitter", "Des modifications ne sont pas enregistrées. "
                                                         "Quitter quand même ?"):
             return
         self.disconnect()
+        self.live.close()
         for job in (self._tick_job, self._render_job):
             if job:
                 self.root.after_cancel(job)

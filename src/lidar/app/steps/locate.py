@@ -26,19 +26,21 @@ from ...localization import grid as G
 from ...localization import scans as SC
 from ...localization import vector as V
 from ...localization.globalloc import _on_map
-from ...localization.tracking import Tracker
+
 from ...refmap import build_reference
 from ...scope.mapview import Editor
 from ...scope.session import read_any
-from ...segments import Segment
 from .. import style as S
 from ..components import PilotPad
+from ..live import trail_segments
 from .base import Step
 
 MODES = ["Scan de la liste", "Fichier importé", "Robot en direct"]
 REFS = {"Grid map": "grid", "Carte vectorielle": "vecteur", "Scan voisin": "scans"}
 LOST = 0.35            # moins de 35 % des points sur les murs : pose jugée fausse
 ANIM_FRAMES, ANIM_MS = 16, 28
+MODE_TEXT = {"suivi": "suivi", "global": "relocalisé (toute la carte)", "incertain": "incertain : pose prévue gardée",
+             "perdu": "perdu : recherche en cours"}
 PROBE = "probe"        # clé du scan libre pour les gestes de la carte
 EXPLAIN = {
     "exhaustive": "Teste toutes les poses autour du départ (pas de 5 cm et 1°) : sûr mais lent.",
@@ -69,9 +71,10 @@ class LocateStep(Step):
         self.flash = 0                      # surbrillance après un placement (nombre de rendus restants)
         self.anim = None
         self.imported: list = []
-        self.tracker: Tracker | None = None
+        self.following = False              # suivi en direct lancé (calcul en arrière-plan : app.live)
         self.live_step = None
         self.live_points = None
+        self.trail: tuple = ()
         self._refs: dict = {}
         self._temp_ref = (None, None)
 
@@ -124,7 +127,7 @@ class LocateStep(Step):
         S.button(self.live_box, "Relocaliser dans toute la carte", self._relocalize, "ghost").pack(fill="x", pady=(0, 10))
         self.pilot_card = S.Card(self.live_box, "Piloter (Wi-Fi)", "Déplace le robot et regarde-le se replacer.")
         self.pilot_card.pack(fill="x", pady=(0, 10))
-        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status)
+        self.pad = PilotPad(self.pilot_card.body, lambda: self.app.robot, self.app.status, self.app.on_command)
         self.pad.pack(fill="x")
 
         # ---- résultat
@@ -167,7 +170,7 @@ class LocateStep(Step):
         else:
             self.live_box.pack_forget()
             self.probe_box.pack(fill="x", pady=(0, 10), before=self.result_card)
-            if self.tracker is not None:
+            if self.following:
                 self.toggle_follow()
         if mode == MODES[1]:
             self.file_row.pack(fill="x", pady=(6, 0), after=self.probe_label)
@@ -223,12 +226,14 @@ class LocateStep(Step):
         self._set_editor()
 
     def leave(self) -> None:
-        if self.tracker is not None:
+        if self.following:
             self.toggle_follow()
         self._stop_anim()
 
     def reset(self) -> None:
-        self.probe, self.tracker, self.live_step = None, None, None
+        if self.following:
+            self.app.live.stop()
+        self.probe, self.following, self.live_step, self.trail = None, False, None, ()
         self.imported = []
         self._refs.clear()
 
@@ -514,8 +519,9 @@ class LocateStep(Step):
         self.app.status("Démo : un robot simulé roule dans ta carte. Clique sur « Suivre le robot ».")
 
     def toggle_follow(self) -> None:
-        if self.tracker is not None:
-            self.tracker = None
+        if self.following:
+            self.following = False
+            self.app.live.stop()
             self.follow_btn.configure(text="▶  Suivre le robot en temps réel", fg_color=S.ACCENT, hover_color=S.ACCENT_HOVER)
             self.app.status("Suivi arrêté.")
             return
@@ -526,14 +532,16 @@ class LocateStep(Step):
         if ref is None:
             self.app.status("Il faut une carte de référence (étape Cartes).")
             return
-        self.tracker = Tracker(ref.grid, ref.segments)
-        self.live_step = None
+        self.app.live.start(ref.grid, ref.segments)       # pas de pose de départ : recherche globale
+        self.following, self.live_step, self.trail = True, None, ()
         self.follow_btn.configure(text="■  Arrêter le suivi", fg_color=S.WARN, hover_color="#E68600")
-        self.app.status("Suivi : chaque tour du lidar est replacé sur la carte (global au début, puis autour).")
+        self.app.status("Suivi : chaque tour du lidar est replacé sur la carte (global au début, puis autour de la "
+                        "pose prévue par les commandes). Le calcul tourne en arrière-plan.")
 
     def _relocalize(self) -> None:
-        if self.tracker is not None:
-            self.tracker.reset()
+        if self.following:
+            self.app.live.relocalize()
+            self.trail = ()
             self.app.status("Le prochain tour sera localisé dans toute la carte.")
 
     def on_live(self, frame) -> None:
@@ -542,18 +550,20 @@ class LocateStep(Step):
         kind = "démo dans ta carte" if self.app.demo_truth is not None else self.app.source_label
         self.live_info.configure(text=f"Connecté : {kind} · {int((frame.scan.ranges_m > 0).sum())} points par tour",
                                  text_color=S.SUCCESS)
+        if not self.following:
+            self.live_points = self.app.filters().apply(frame.scan).local_points()
+            return
         pts = self.app.filters().apply(frame.scan).local_points()
-        self.live_points = pts
-        if self.tracker is None:
+        if len(pts) >= 20:
+            self.app.live.submit(pts)       # le résultat arrive plus tard dans on_track
+
+    def on_track(self, result) -> None:
+        if not self.following:
             return
-        try:
-            st = self.tracker.update(pts)
-        except ValueError as exc:
-            self.app.status(str(exc))
-            return
-        self.live_step = st
+        st = result.step
+        self.live_step, self.live_points, self.trail = st, result.points, result.trail
         rows = [("Pose du robot", f"{st.pose.x:+.2f}  {st.pose.y:+.2f}  {st.pose.theta_deg:+.1f}°"),
-                ("Mode", "global" if st.mode == "global" else "suivi"),
+                ("Mode", MODE_TEXT.get(st.mode, st.mode)),
                 ("Points sur les murs", f"{st.inliers:.0%}" + ("  ⚠ ambiguë" if st.ambiguous else "")),
                 ("Temps de calcul", f"{st.time_s * 1000:.0f} ms")]
         truth = self.app.demo_truth
@@ -579,9 +589,7 @@ class LocateStep(Step):
                 g = local_to_global(self.live_points, st.pose)
                 layers += [(g, "#34C75955", 60, "o"), (g, S.FOUND, 9, "o")]
                 poses.append((st.pose, S.ACCENT, True))
-            if self.tracker is not None and len(self.tracker.trail) > 1:
-                tr = self.tracker.trail
-                trail = [Segment(a.x, a.y, b.x, b.y) for a, b in zip(tr, tr[1:])]
+            trail = trail_segments(self.trail)
             if app.demo_truth is not None:
                 poses.append((app.demo_truth, S.FAINT, False))
             self.legend("bleu = robot replacé · vert = son tour de lidar · trait = trajet · gris = vraie pose (démo)")

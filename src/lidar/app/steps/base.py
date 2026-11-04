@@ -36,6 +36,9 @@ class Step:
 
     def on_key(self, key: str) -> None: ...
 
+    def on_track(self, result) -> None:
+        """Nouveau résultat de la localisation en direct (app/live.py)."""
+
     # outils ----------------------------------------------------------------
     @property
     def project(self):
