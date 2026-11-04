@@ -163,7 +163,16 @@ Toutes les captures : [`docs/images/jour3/`](docs/images/jour3/). Session compl�
 - **Stop and go :** on scanne à l'arrêt (11 tours combinés). Cartographier en roulant demanderait de corriger la
   déformation d'un tour pris en mouvement.
 - **Méthode probabiliste** (filtre particulaire) : non faite, facultative.
+- **Guidage :** choisir un point sur la carte et laisser le robot planifier son chemin et s'y rendre seul.
+- **Lidar 3D :** la même démarche, avec une dimension de plus.
 
 ## 10. Conclusion personnelle
 
-→ [TP/CONCLUSION.md](TP/CONCLUSION.md)
+- **Apprécié :** comprendre enfin ces robots lidar que je voyais passer sur les réseaux sociaux. Le traitement des
+  points, l'ingéniosité des méthodes, et l'acquisition en direct m'ont passionné : je n'ai pas vu le temps passer.
+- **Moins apprécié :** trop peu de robots pour tout le monde, donc beaucoup de temps sans pouvoir tester.
+- **À améliorer :** plus de robots, plus de temps pour ceux que ça passionne, et un passage à la 3D.
+- **La suite, de mon côté :** le **guidage**, c'est-à-dire choisir un point sur la carte et laisser le robot s'y
+  rendre tout seul.
+
+Texte complet : [TP/CONCLUSION.md](TP/CONCLUSION.md)

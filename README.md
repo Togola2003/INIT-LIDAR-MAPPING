@@ -17,7 +17,7 @@ la carte complète construite **scan après scan**, et le robot qui s'y retrouve
 
 <sub>Essai réel du 04/11/2026 : 93 scans, la salle entière (≈ 12 × 9 m), puis la grid map et les murs.</sub>
 
-**[Compte rendu final](COMPTE_RENDU.md)** · [Journal de bord](JOURNAL.md) · [Le SLAM expliqué](docs/SLAM.md) · [Mode d'emploi](docs/OUTILS.md) · [Robot et firmware](firmware/README.md)
+**[Compte rendu final](COMPTE_RENDU.md)** · [Conclusion personnelle](TP/CONCLUSION.md) · [Journal de bord](JOURNAL.md) · [Le SLAM expliqué](docs/SLAM.md) · [Mode d'emploi](docs/OUTILS.md) · [Robot et firmware](firmware/README.md)
 
 </div>
 
@@ -149,6 +149,7 @@ docs/               le SLAM expliqué, mode d'emploi, images
 
 ── Partie B : la réalisation du TP ───────────────────────────────────
 COMPTE_RENDU.md     compte rendu final
+TP/CONCLUSION.md    conclusion personnelle
 TP/                 comptes rendus du Jour 1, 2 et 3, figures, conclusion
 data/               mesures réelles (salle, salle_jour2, salle_jour3) et simulées
 JOURNAL.md          traçabilité : quoi, quand, quel commit
