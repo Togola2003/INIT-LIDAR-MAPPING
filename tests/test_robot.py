@@ -73,3 +73,17 @@ def test_speed_command_against_a_fake_robot():
     time.sleep(0.3)
     server.shutdown()
     assert "/speed?v=255" in _FakeRobot.calls
+
+
+def test_command_motion_and_odometry():
+    from lidar.robot import Odometry, command_motion
+    dx, dy, dth = command_motion("forward", 1000, 150)
+    assert dx == pytest.approx(0.30) and dy == 0 and dth == 0
+    assert command_motion("rotateleft", 500, 150)[2] == pytest.approx(45.0)
+    assert command_motion("right", 1000, 150)[1] < 0
+    assert command_motion("forward", 9999, 150)[0] == pytest.approx(0.60)     # 2 s maximum
+    odo = Odometry()
+    odo.add("forward", 1000, 100)
+    odo.add("rotateright", 1000, 100)
+    assert odo.take() == pytest.approx((0.2, 0.0, -60.0))
+    assert odo.take() == (0.0, 0.0, 0.0)

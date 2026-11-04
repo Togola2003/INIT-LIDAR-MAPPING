@@ -31,6 +31,42 @@ from .scan import Scan
 from .scope.sources import Event, Frame
 
 DEFAULT_HOST = "192.168.4.1"
+
+# Odométrie par les commandes (le robot n'a pas de codeurs) : vitesse obtenue PAR UNITÉ de vitesse (0-255).
+# Valeurs de départ À ÉTALONNER : commander 1 s à la vitesse 150 et mesurer au mètre / au rapporteur.
+LINEAR_M_S_PER_UNIT = 0.0020      # ≈ 0,30 m/s à 150
+LATERAL_FACTOR = 0.8              # un Mecanum glisse moins vite de côté qu'il n'avance
+ROT_DEG_S_PER_UNIT = 0.6          # ≈ 90 °/s à 150
+COMMAND_DIRECTIONS = {            # (avant, gauche, rotation trigo) pour chaque commande
+    "forward": (1, 0, 0), "backward": (-1, 0, 0), "left": (0, 1, 0), "right": (0, -1, 0),
+    "rotateleft": (0, 0, 1), "rotateright": (0, 0, -1),
+}
+
+
+def command_motion(action: str, time_ms: int, speed: int = 150) -> tuple[float, float, float]:
+    """Déplacement estimé (dx vers l'avant m, dy vers la gauche m, dθ °) dans le repère du robot pour une commande."""
+    fx, fy, fr = COMMAND_DIRECTIONS[action]
+    t = max(0, min(MAX_MOVE_MS, time_ms)) / 1000.0
+    v = LINEAR_M_S_PER_UNIT * speed * t
+    return fx * v, fy * v * LATERAL_FACTOR, fr * ROT_DEG_S_PER_UNIT * speed * t
+
+
+class Odometry:
+    """Cumule le mouvement commandé depuis la dernière lecture (thread-safe) : sert de prédiction au suivi."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._acc = [0.0, 0.0, 0.0]
+
+    def add(self, action: str, time_ms: int, speed: int) -> None:
+        dx, dy, dth = command_motion(action, time_ms, speed)
+        with self._lock:
+            self._acc = [self._acc[0] + dx, self._acc[1] + dy, self._acc[2] + dth]
+
+    def take(self) -> tuple[float, float, float]:
+        with self._lock:
+            out, self._acc = tuple(self._acc), [0.0, 0.0, 0.0]
+        return out
 FORMAT_WIFI = "wifi (RobotControl)"
 MOVES = ("forward", "backward", "left", "right", "rotateleft", "rotateright")
 MAX_MOVE_MS = 2000

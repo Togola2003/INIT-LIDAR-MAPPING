@@ -80,20 +80,66 @@ def test_global_localization_without_initial_pose():
     assert res.inliers > 0.6 and not res.ambiguous and res.positions > 50
 
 
+WALLS = [(0, 0, 6, 0), (6, 0, 6, 4), (6, 4, 0, 4), (0, 4, 0, 0), (1, 1, 2.2, 1), (2.2, 1, 2.2, 1.6),
+         (4.2, 2.6, 5, 2.6), (5, 2.6, 5, 3.3)]
+
+
+def _room_reference():
+    from lidar.refmap import build_reference
+    maps = [simulate_scan(p, walls=WALLS, noise_m=0.005, seed=k).filtered()
+            for k, p in enumerate([Pose(1, 3, 0), Pose(3, 2, 45), Pose(5, 1, 100), Pose(4, 3.4, -90)])]
+    return build_reference(maps, ["a", "b", "c", "d"])
+
+
 def test_tracker_follows_a_moving_robot():
     from lidar.localization.tracking import Tracker
-    from lidar.refmap import build_reference
-    walls = [(0, 0, 6, 0), (6, 0, 6, 4), (6, 4, 0, 4), (0, 4, 0, 0), (1, 1, 2.2, 1), (2.2, 1, 2.2, 1.6),
-             (4.2, 2.6, 5, 2.6), (5, 2.6, 5, 3.3)]
-    maps = [simulate_scan(p, walls=walls, noise_m=0.005, seed=k).filtered()
-            for k, p in enumerate([Pose(1, 3, 0), Pose(3, 2, 45), Pose(5, 1, 100), Pose(4, 3.4, -90)])]
-    ref = build_reference(maps, ["a", "b", "c", "d"])
+    ref = _room_reference()
     tracker = Tracker(ref.grid, ref.segments)
     modes = []
     for k in range(8):                                    # le robot avance de 15 cm et tourne de 3° par scan
         truth = Pose(1.5 + 0.15 * k, 2.2, 10 + 3 * k)
-        step = tracker.update(simulate_scan(truth, walls=walls, noise_m=0.01, seed=20 + k).filtered().local_points())
+        step = tracker.update(simulate_scan(truth, walls=WALLS, noise_m=0.01, seed=20 + k).filtered().local_points())
         pos, ang = pose_error(step.pose, truth)
         assert pos < 0.05 and ang < 2.0
         modes.append(step.mode)
     assert modes[0] == "global" and set(modes[1:]) == {"suivi"} and len(tracker.trail) == 8
+
+
+def test_motion_prediction_allows_big_steps():
+    """Grands déplacements entre deux tours (40 cm, 35°) : suivis grâce au mouvement commandé."""
+    from lidar.localization.tracking import Tracker, compose
+    ref = _room_reference()
+    tracker = Tracker(ref.grid, ref.segments)
+    pose = Pose(1.4, 2.0, 0)
+    tracker.update(simulate_scan(pose, walls=WALLS, noise_m=0.01, seed=1).filtered().local_points())
+    for k, motion in enumerate([(0.4, 0, 0), (0, 0, 35), (0.4, 0, 0), (0, 0, -35), (0.3, 0.2, 0)]):
+        pose = compose(pose, motion)
+        commanded = (motion[0] * 1.2, motion[1] * 0.8, motion[2] * 0.85)   # odométrie imparfaite
+        step = tracker.update(simulate_scan(pose, walls=WALLS, noise_m=0.01, seed=40 + k).filtered().local_points(),
+                              commanded)
+        pos, ang = pose_error(step.pose, pose)
+        assert step.mode == "suivi" and pos < 0.05 and ang < 2.0
+
+
+def test_a_bad_scan_does_not_make_the_robot_jump():
+    from lidar.localization.tracking import Tracker
+    ref = _room_reference()
+    tracker = Tracker(ref.grid, ref.segments)
+    truth = Pose(2.5, 2.0, 30)
+    tracker.update(simulate_scan(truth, walls=WALLS, noise_m=0.01, seed=3).filtered().local_points())
+    garbage = np.random.default_rng(0).uniform(-0.5, 0.5, (200, 2))      # tour flou : rien ne colle
+    step = tracker.update(garbage)
+    assert step.mode == "incertain" and pose_error(step.pose, truth)[0] < 0.05
+    assert len(tracker.trail) == 1                                         # rien d'ajouté au trajet
+
+
+def test_place_scan_on_previous_scans():
+    from lidar.localization.tracking import place_scan
+    ref = _room_reference()
+    truth = Pose(2.8, 1.6, 70)
+    pts = simulate_scan(truth, walls=WALLS, noise_m=0.01, seed=8).filtered().local_points()
+    near = place_scan(pts, truth.moved(0.5, -0.4, 25), ref.grid, ref.segments)
+    blind = place_scan(pts, None, ref.grid, ref.segments)
+    for res in (near, blind):
+        pos, ang = pose_error(res.pose, truth)
+        assert pos < 0.05 and ang < 2.0 and res.inliers > 0.6
