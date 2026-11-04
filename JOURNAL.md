@@ -69,6 +69,7 @@ par étape.
 
 | Heure | Étape | Commit |
 |---|---|---|
-| matin | Problème : les moteurs tournent tout seuls avec n'importe quel programme. Causes : fils moteurs en direct sur l'ESP32 (broches flottantes ou hautes au démarrage), et D19 utilisée par l'I2C du firmware RobotControl. **Firmware 01** (moteurs arrêtés + identification des fils) et **firmware 02** (lidar + moteurs + Wi-Fi + télécommande téléphone, compatible LidarLab), compilés tous les deux | voir `git log` |
+| matin | Problème : les moteurs tournent tout seuls avec n'importe quel programme. Causes : fils moteurs en direct sur l'ESP32 (broches flottantes ou hautes au démarrage), et D19 utilisée par l'I2C du firmware RobotControl. **Firmware 01** (moteurs arrêtés + identification des fils) et **firmware 02** (lidar + moteurs + Wi-Fi + télécommande téléphone, compatible LidarLab), compilés tous les deux | `6458404` → `4abdfad` |
+| matin | Test 01 sur le robot : relevé fil → roue (M1 avant droite, M2 avant gauche, M3 arrière gauche, M4 arrière droite ; sur les roues de droite, c'est le fil « b » qui fait avancer), recopié dans `moteurs.h` | voir `git log` |
 
 Plan : [TP/Jour3/README.md](TP/Jour3/README.md).

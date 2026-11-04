@@ -46,14 +46,18 @@ rappel à la masse (10 kΩ) sur ces deux fils. Ce n'est pas nécessaire pour le 
 
 | Touche | Fil | Broche | Roue qui tourne | Sens |
 |---|---|---|---|---|
-| 1 | m3a | D15 | | |
-| 2 | m3b | D2 | | |
-| 3 | m4a | D4 | | |
-| 4 | m4b | D16 | | |
-| 5 | m1a | D17 | | |
-| 6 | m1b | D5 | | |
-| 7 | m2a | D18 | | |
-| 8 | m2b | D19 | | |
+| 1 | m3a | D15 | arrière gauche | avance |
+| 2 | m3b | D2 | arrière gauche | recule |
+| 3 | m4a | D4 | arrière droite | recule |
+| 4 | m4b | D16 | arrière droite | avance |
+| 5 | m1a | D17 | avant droite | recule |
+| 6 | m1b | D5 | avant droite | avance |
+| 7 | m2a | D18 | avant gauche | avance |
+| 8 | m2b | D19 | avant gauche | recule |
+
+*Relevé fait sur notre robot le 04/11. Résultat : M1 = avant droite, M2 = avant gauche, M3 = arrière gauche, M4 =
+arrière droite. Sur les roues de droite, c'est le fil « b » qui fait avancer. Ce tableau est déjà recopié dans
+`02_LidarRobot_WiFi/moteurs.h`.*
 
 - **Normalement,** chaque paire (m1a/m1b, …) commande **la même roue**, une fois dans un sens et une fois dans l'autre.
 - **Vérification :** `a` `b` `c` `d` font tourner M1 M2 M3 M4 dans le sens « A », et `A` `B` `C` `D` dans l'autre sens.
@@ -66,7 +70,7 @@ rappel à la masse (10 kΩ) sur ces deux fils. Ce n'est pas nécessaire pour le 
      broche B de la roue qui s'y trouve ;
    - mettre `invert = true` si, quand on demande « avancer », cette roue tourne vers l'arrière.
 
-   L'hypothèse de départ est M1 = avant gauche, M3 = avant droite, M2 = arrière gauche, M4 = arrière droite.
+   Pour notre robot, c'est déjà fait : relevé du 04/11 ci-dessus.
 2. Dans `02_LidarRobot_WiFi.ino`, **donner un nom unique au Wi-Fi** (`SSID`) s'il y a plusieurs robots dans la salle,
    par exemple `"LD06-Togola"`.
 3. Ouvrir `02_LidarRobot_WiFi.ino` → **Téléverser**. Moniteur série à 115200 : `Wi-Fi "…" pret : http://192.168.4.1`.

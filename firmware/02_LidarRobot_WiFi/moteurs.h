@@ -2,21 +2,20 @@
 //  Moteurs du robot Mecanum : 4 roues, chacune pilotée par 2 broches (A, B) d'un pont en H.
 //    A en PWM, B à 0  -> la roue tourne dans un sens ; A à 0, B en PWM -> l'autre sens ; tout à 0 -> arrêt.
 //
-//  >>> À REMPLIR avec le résultat de l'étape 1 (01_Moteurs_Test) <<<
-//  Pour chaque POSITION de roue : sa broche A, sa broche B, et inverser = true si, avec « avancer »,
-//  cette roue tourne en arrière.
+//  Rempli avec le résultat de l'étape 1 (01_Moteurs_Test, relevé du 04/11) :
+//  pour chaque POSITION de roue, broche A = celle qui la fait AVANCER, broche B = celle qui la fait reculer.
+//  (inverser = true si, avec « avancer », une roue tourne quand même en arrière.)
 // ============================================================================
 #pragma once
 #include <Arduino.h>
 
 struct Wheel { uint8_t pinA; uint8_t pinB; bool invert; const char* name; };
 
-// Hypothèse de départ (à vérifier) : M1 = m1a/m1b ... M4 = m4a/m4b
 Wheel WHEELS[4] = {
-  {17,  5, false, "avant gauche"},     // M1 : fils m1a (D17), m1b (D5)
-  {15,  2, false, "avant droite"},     // M3 : fils m3a (D15), m3b (D2)
-  {18, 19, false, "arriere gauche"},   // M2 : fils m2a (D18), m2b (D19)
-  { 4, 16, false, "arriere droite"},   // M4 : fils m4a (D4),  m4b (D16)
+  {18, 19, false, "avant gauche"},     // M2 : m2a (D18) avance, m2b (D19) recule   (touches 7 / 8)
+  { 5, 17, false, "avant droite"},     // M1 : m1b (D5)  avance, m1a (D17) recule   (touches 6 / 5)
+  {15,  2, false, "arriere gauche"},   // M3 : m3a (D15) avance, m3b (D2)  recule   (touches 1 / 2)
+  {16,  4, false, "arriere droite"},   // M4 : m4b (D16) avance, m4a (D4)  recule   (touches 4 / 3)
 };
 enum { AVG = 0, AVD = 1, ARG = 2, ARD = 3 };
 
